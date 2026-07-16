@@ -35,8 +35,16 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
     empty: "bg-amber-500/15 text-amber-500",
     error: "bg-rose-500/15 text-rose-500",
     running: "bg-sky-500/15 text-sky-500",
+    // §4.1 write-decision outcomes emitted by retain
+    add: "bg-emerald-500/15 text-emerald-500",
+    update: "bg-violet-500/15 text-violet-500",
+    invalidate: "bg-rose-500/15 text-rose-500",
+    noop: "bg-muted text-muted-foreground",
   };
-  const glyph: Record<string, string> = { hit: "✓", empty: "∅", error: "✗", running: "…" };
+  const glyph: Record<string, string> = {
+    hit: "✓", empty: "∅", error: "✗", running: "…",
+    add: "+", update: "↻", invalidate: "⊘", noop: "=",
+  };
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${map[outcome] ?? "bg-muted text-muted-foreground"}`}>
       {glyph[outcome] ?? "•"} {outcome}
