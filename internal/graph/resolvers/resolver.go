@@ -3,8 +3,8 @@ package resolvers
 import (
 	"context"
 
-	"github.com/fadymondy/cabrain/internal/app"
-	graphgen "github.com/fadymondy/cabrain/internal/graph/gen"
+	"github.com/togo-framework/cabrain/internal/app"
+	graphgen "github.com/togo-framework/cabrain/internal/graph/gen"
 )
 
 // Resolver is the GraphQL root, holding the app container (DB, hooks, log).

@@ -13,7 +13,7 @@ sequenced build in [`PLAN.md`](./PLAN.md).
   [`contracts/tools.md`](./contracts/tools.md) (§5.1 six MCP tools),
   [`docs/capture-mode.md`](./docs/capture-mode.md) (§6 capture hook).
 - **Track A (in progress):** togo app scaffolded at repo root (`togo v0.2.31`, module
-  `github.com/fadymondy/cabrain`, `--db togo-postgres`, features `queue,storage,cache`);
+  `github.com/togo-framework/cabrain`, `--db togo-postgres`, features `queue,storage,cache`);
   `plugins/cabrain` + the five resources next.
 - **Blocked (Track B):** `togo migrate`/`serve`/`db:up` and embedding benchmarks await the
   finalized infra bundle (SPEC §1.5). Postgres + MinIO are up on the box; all infra

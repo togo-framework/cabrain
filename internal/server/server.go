@@ -19,11 +19,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/togo-framework/togo"
 
-	"github.com/fadymondy/cabrain/internal/app"
-	graphgen "github.com/fadymondy/cabrain/internal/graph/gen"
-	"github.com/fadymondy/cabrain/internal/graph/resolvers"
-	_ "github.com/fadymondy/cabrain/internal/plugins" // blank-imports installed plugins (togo install)
-	"github.com/fadymondy/cabrain/internal/rest"
+	"github.com/togo-framework/cabrain/internal/app"
+	graphgen "github.com/togo-framework/cabrain/internal/graph/gen"
+	"github.com/togo-framework/cabrain/internal/graph/resolvers"
+	_ "github.com/togo-framework/cabrain/internal/plugins" // blank-imports installed plugins (togo install)
+	"github.com/togo-framework/cabrain/internal/rest"
 )
 
 // Boot builds the kernel + app and mounts REST, GraphQL, health, and SSE on the

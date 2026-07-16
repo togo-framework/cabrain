@@ -13,7 +13,7 @@ model:
 # generates the executable schema + input models. GraphQL types autobind to the
 # sqlc models in internal/db/gen.
 autobind:
-  - "github.com/fadymondy/cabrain/internal/db/gen"
+  - "github.com/togo-framework/cabrain/internal/db/gen"
 
 models:
   Time:

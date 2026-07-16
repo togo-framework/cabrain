@@ -1,0 +1,8 @@
+name: brain
+description: CaBrain memory organ — hybrid recall (vector + BM25/RRF + rerank), salience, reconsolidation; hot/cold tiers on togo-postgres. Providers (TEI, Cognee, cold store) plug in as driver plugins.
+priority: 50
+backend:
+  package: github.com/togo-framework/brain
+frontend:
+  dir: web
+commands: []

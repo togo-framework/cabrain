@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fadymondy/cabrain/internal/server"
+	"github.com/togo-framework/cabrain/internal/server"
 )
 
 func main() {

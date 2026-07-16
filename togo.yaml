@@ -1,5 +1,5 @@
 name: cabrain
-module: github.com/fadymondy/cabrain
+module: github.com/togo-framework/cabrain
 
 database:
   driver: pgx

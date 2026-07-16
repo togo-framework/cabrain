@@ -7,8 +7,8 @@ import (
 
 	"github.com/togo-framework/togo"
 
-	"github.com/fadymondy/cabrain/internal/app"
-	"github.com/fadymondy/cabrain/internal/db/seeders"
+	"github.com/togo-framework/cabrain/internal/app"
+	"github.com/togo-framework/cabrain/internal/db/seeders"
 )
 
 func main() {

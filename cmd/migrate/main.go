@@ -10,7 +10,7 @@ import (
 
 	"github.com/togo-framework/togo"
 
-	"github.com/fadymondy/cabrain/internal/app"
+	"github.com/togo-framework/cabrain/internal/app"
 )
 
 func main() {
