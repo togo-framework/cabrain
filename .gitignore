@@ -1,14 +1,18 @@
-# secrets / env — never commit (infra agent owns these; §1.5)
+/bin/
+*.exe
 .env
+.env.local
+/internal/db/gen/
+/internal/graph/gen/
+/web/node_modules/
+/web/.next/
+/db/atlas/migrations/atlas.sum
+.DS_Store
+
+# CaBrain — secrets never committed (infra agent owns these; SPEC §1.5)
 .env.*
+!.env.example
 *.secrets
 .pg-secrets
 .minio-secrets
-
-# build / deps
-/bin/
-/tmp/
 *.log
-
-# generated (ToGO / sqlc / atlas will own these once scaffolded)
-/gen/

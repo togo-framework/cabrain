@@ -1,0 +1,19 @@
+name: cabrain
+module: github.com/fadymondy/cabrain
+
+database:
+  driver: pgx
+  url: ${DATABASE_URL}
+
+api:
+  graphql: /graphql
+  rest: /api
+  docs: /docs
+
+auth:
+  provider: supabase
+
+frontend:
+  dir: web
+
+plugins: []

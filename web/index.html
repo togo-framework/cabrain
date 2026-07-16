@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cabrain — built with togo</title>
+    <!-- No-flash theme: apply the persisted choice (default dark) before first paint -->
+    <script>
+      (function () {
+        try {
+          var k = "togo-theme", t = localStorage.getItem(k);
+          if (!t) { t = "dark"; localStorage.setItem(k, t); }
+          var d = document.documentElement;
+          d.setAttribute("data-theme", t);
+          d.classList.toggle("dark", t !== "light");
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

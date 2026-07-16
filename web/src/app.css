@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@import "@togo-framework/ui/styles.css";
+@source "../node_modules/@togo-framework/ui/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+body { margin: 0; font-family: var(--tg-font); }
+
+/* Base surface + text colour from the active theme tokens — so unstyled text
+   (plain headings like "Welcome back", dashboard titles) is legible in dark
+   mode instead of inheriting the browser-default black. */
+@layer base {
+  body { @apply bg-background text-foreground antialiased; }
+}
