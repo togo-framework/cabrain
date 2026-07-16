@@ -1,0 +1,14 @@
+# secrets / env — never commit (infra agent owns these; §1.5)
+.env
+.env.*
+*.secrets
+.pg-secrets
+.minio-secrets
+
+# build / deps
+/bin/
+/tmp/
+*.log
+
+# generated (ToGO / sqlc / atlas will own these once scaffolded)
+/gen/
