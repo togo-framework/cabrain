@@ -85,10 +85,12 @@ type RetainResult struct {
 	SupersededID string  `json:"supersededId,omitempty"`
 }
 
-// Retain embeds the content and stores it as a hot episodic memory. The Mem0-style
-// ADD/UPDATE/INVALIDATE/NOOP write-decision and the full salience formula land as
-// the Engine/LLM provider is wired (SPEC §4.1); for now every write is an ADD with
-// importance seeded from the hint + a novelty floor.
+// Retain embeds the content, runs the §4.1 write-decision against its nearest
+// existing memory, and applies it: ADD a new hot episodic row, UPDATE (supersede)
+// an evolved memory, INVALIDATE a retracted one, or NOOP an exact/near-duplicate.
+// Importance is seeded from the hint + a novelty floor (the full salience formula
+// is a Phase-2 tuning job). The write-decision logic is pure (writedecision.go);
+// only the neighbor lookup needs the embedder.
 func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, error) {
 	emb := s.embedder()
 	if emb == nil {
@@ -103,6 +105,7 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	if err != nil || len(vecs) == 0 {
 		return nil, errors.New("brain.Retain: embed failed: " + errStr(err))
 	}
+	vec := vecLit(vecs[0])
 	vis := in.Visibility
 	if vis == "" {
 		vis = "private"
@@ -111,6 +114,27 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	if imp <= 0 {
 		imp = 0.5
 	}
+
+	// §4.1 decision: compare against the nearest existing memory in scope.
+	top := s.topNeighbor(ctx, db, in.Namespace, vec)
+	decision, relatedID := writeDecision(top, in.Content)
+
+	// NOOP: the memory already exists — strengthen it (reconsolidation) instead of
+	// storing a duplicate. No new row.
+	if decision == "noop" {
+		_, _ = db.ExecContext(ctx,
+			`UPDATE memories SET access_count = access_count + 1, last_accessed_at = now(),
+			        importance = LEAST(1.0, importance + 0.02) WHERE id = $1`, relatedID)
+		s.event(ctx, db, "retain", in.Namespace, in.OwnerAgentID, "noop", relatedID, int(time.Since(start).Milliseconds()))
+		return &RetainResult{ID: relatedID, Decision: "noop", Importance: top.simImportance(imp)}, nil
+	}
+
+	// INVALIDATE: retract the contradicted memory, and record the correction as a
+	// new memory so the retraction itself is queryable.
+	if decision == "invalidate" {
+		_, _ = db.ExecContext(ctx, `UPDATE memories SET invalid_at = now() WHERE id = $1 AND invalid_at IS NULL`, relatedID)
+	}
+
 	var id string
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO memories
@@ -119,10 +143,18 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 		VALUES ($1,$2,$3,'experience','episodic',$4,$5,$6,$7::vector,$8,'hot')
 		RETURNING id`,
 		in.Namespace, nullStr(in.OwnerAgentID), vis, in.Content,
-		nullStr(in.SourceKind), nullStr(in.SourceRef), vecLit(vecs[0]), imp,
+		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp,
 	).Scan(&id)
 	if err != nil {
 		return nil, errors.New("brain.Retain: insert: " + err.Error())
+	}
+
+	// UPDATE: the new row supersedes the evolved one (never hard-delete — the old
+	// row stays queryable, tagged with superseded_by + invalid_at).
+	if decision == "update" {
+		_, _ = db.ExecContext(ctx,
+			`UPDATE memories SET invalid_at = now(), superseded_by = $2 WHERE id = $1 AND invalid_at IS NULL`,
+			relatedID, id)
 	}
 	// Populate the BM25 vector best-effort: BM25 is an accelerator, not the
 	// authoritative store, so a tokenizer hiccup must never fail a write (the row
@@ -131,12 +163,42 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 		`UPDATE memories SET content_bm25 = tokenize($2,'cabrain_ml') WHERE id = $1`, id, in.Content)
 	// Invalidate this namespace's L1 recall cache — a new memory can change results.
 	s.bumpEpoch(in.Namespace)
-	s.event(ctx, db, "retain", in.Namespace, in.OwnerAgentID, "hit", id, int(time.Since(start).Milliseconds()))
+	s.event(ctx, db, "retain", in.Namespace, in.OwnerAgentID, decision, id, int(time.Since(start).Milliseconds()))
 	// Fire-and-forget graph enrichment when the cognify engine is present.
 	if eng := s.engine(); eng != nil {
 		go func() { _ = eng.Cognify(context.Background(), in.Namespace, id, in.Content) }()
 	}
-	return &RetainResult{ID: id, Decision: "add", Importance: imp}, nil
+	res := &RetainResult{ID: id, Decision: decision, Importance: imp}
+	if decision == "update" || decision == "invalidate" {
+		res.SupersededID = relatedID
+	}
+	return res, nil
+}
+
+// topNeighbor returns the nearest existing memory to the candidate embedding in
+// the namespace (hot, non-invalidated), or nil if none / on error. Best-effort:
+// a failure just yields a plain ADD.
+func (s *Store) topNeighbor(ctx context.Context, db *sql.DB, ns, vec string) *neighbor {
+	var n neighbor
+	err := db.QueryRowContext(ctx, `
+		SELECT id::text, content, 1 - (embedding <=> $1::vector) AS sim
+		FROM memories
+		WHERE namespace = $2 AND invalid_at IS NULL AND tier = 'hot' AND embedding IS NOT NULL
+		ORDER BY embedding <=> $1::vector
+		LIMIT 1`, vec, ns).Scan(&n.ID, &n.Content, &n.Sim)
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
+// simImportance blends the caller hint with the matched memory's salience on NOOP
+// (a repeat sighting slightly strengthens the memory).
+func (n *neighbor) simImportance(hint float64) float64 {
+	if hint <= 0 {
+		hint = 0.5
+	}
+	return hint
 }
 
 // --- recall (SPEC §4.2) -------------------------------------------------------
