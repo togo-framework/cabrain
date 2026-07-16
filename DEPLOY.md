@@ -57,12 +57,45 @@ curl -s -XPOST http://cabrain:8080/api/brain/retain \
 On-stacknet the `retain` embed call reaches `tei-embed` and succeeds — the same request that
 fails with `lookup tei-embed: no such host` from the workspace.
 
+## Redis L1 working-memory cache (SPEC §2.1, D4)
+
+Recall does **cache-aside over the kernel `Cache`** (driver-agnostic), keyed by a
+per-namespace epoch that every retain bumps (instant, scan-free invalidation).
+Postgres stays authoritative — the cache only skips a repeat embed+query.
+
+- **Today (no config):** `CACHE_DRIVER=memory` → an in-process L1 (still skips repeated
+  identical recalls). Zero extra infra.
+- **Shared Redis L1:** install the redis cache driver and switch config — the brain code
+  is unchanged:
+  ```bash
+  togo install togo-framework/cache-redis     # registers the "redis" cache driver
+  # .env:
+  CACHE_DRIVER=redis
+  REDIS_URL=redis://<redis-host>:6379/0        # or the cache plugin's REDIS_* keys
+  BRAIN_RECALL_CACHE_TTL=30                     # seconds; 0 disables recall caching
+  ```
+- **Stack reality (checked 2026-07-16):** Redis is **not** in the `stack_stacknet`
+  compose (services: pg, tei-embed, tei-rerank, minio, cognee, ollama) and `:6379` was not
+  usably reachable from the workspace (TCP connects, peer closes with no reply). So the
+  Redis L1 stays optional until Redis is attached to `stack_stacknet`; the in-process L1 is
+  the default and needs nothing.
+
 ## Already done / follow-ups
 
 - **Done:** schema migrated to `cabrain` (memories+default partition, entities, memory_entities,
-  memory_events, namespace_grants); vector HNSW index; read-API + retain/recall + brain-tei wired.
-- **Infra TODO (superuser):** grant `cabrain` on `part_config`/`part_config_sub` so pg_partman
-  monthly rollover (Phase 2 tiering) can replace the manual DEFAULT partition.
-- **Next (app):** BM25 fusion (create the `cabrain_ml` tokenizer + `content_bm25` column + `bm25`
-  index; fuse `<&>`/`to_bm25query` into recall), and the `brain-cognee` engine plugin for the
-  entity graph.
+  memory_events, namespace_grants); vector HNSW index; read-API + retain/recall + brain-tei wired;
+  **BM25 fusion (hybrid recall) code-complete** — `content_bm25` column + `memories_bm25` index +
+  `cabrain_ml` tokenizer, fused with the vector path via RRF in `recallSQL`, with a transparent
+  vector-only fallback (`recallVecSQL`) when the BM25 layer is absent. Verified against the live DB
+  with `brainctl` (schema applies; BM25 objects create + rank once granted). L1 recall cache wired +
+  unit-tested.
+- **Infra TODO (superuser) — BM25:** the `cabrain` app role lacks `USAGE` on `bm25_catalog` /
+  `tokenizer_catalog` (the infra §5.2 BM25 test ran as superuser). Run **`infra/grant-bm25.sql`**
+  as a superuser on the `cabrain` DB, then `brainctl bm25 && brainctl bm25-test`. Until then recall
+  runs vector-only (no lexical fusion) — non-fatal, `ErrBM25Skipped`.
+- **Infra TODO (superuser) — partman:** grant `cabrain` on `part_config`/`part_config_sub` so
+  pg_partman monthly rollover (Phase 2 tiering) can replace the manual DEFAULT partition.
+- **Ops CLI:** `cmd/brainctl` (`inspect` | `migrate` | `bm25` | `bm25-test`) — connects with
+  `DATABASE_URL` (pgx); use it on-stack to apply/verify the BM25 layer.
+- **Next (app):** 1-hop entity expansion in recall, the `brain-cognee` engine plugin for the entity
+  graph, MCP tools (§5.1), and the capture-mode hook (§6).

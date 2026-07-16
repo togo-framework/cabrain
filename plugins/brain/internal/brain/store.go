@@ -124,6 +124,13 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	if err != nil {
 		return nil, errors.New("brain.Retain: insert: " + err.Error())
 	}
+	// Populate the BM25 vector best-effort: BM25 is an accelerator, not the
+	// authoritative store, so a tokenizer hiccup must never fail a write (the row
+	// is already committed and recallable by vector). Off the correctness path.
+	_, _ = db.ExecContext(ctx,
+		`UPDATE memories SET content_bm25 = tokenize($2,'cabrain_ml') WHERE id = $1`, id, in.Content)
+	// Invalidate this namespace's L1 recall cache — a new memory can change results.
+	s.bumpEpoch(in.Namespace)
 	s.event(ctx, db, "retain", in.Namespace, in.OwnerAgentID, "hit", id, int(time.Since(start).Milliseconds()))
 	// Fire-and-forget graph enrichment when the cognify engine is present.
 	if eng := s.engine(); eng != nil {
@@ -171,31 +178,29 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 		q.Limit = 8
 	}
 	start := time.Now()
+	// L1 cache-aside (SPEC §2.1): serve identical repeated recalls without an embed
+	// call or a DB hit. Checked before embedding so a hit is genuinely cheap. Keyed
+	// by the namespace epoch so any retain in the namespace invalidates it.
+	ckey := recallCacheKey(q, s.nsEpoch(q.Namespace))
+	if hit, ok := s.getCachedRecall(ckey); ok {
+		s.event(ctx, db, "recall", q.Namespace, "", "hit", nil, int(time.Since(start).Milliseconds()))
+		return hit, nil
+	}
 	vecs, err := emb.Embed(ctx, []string{q.Query})
 	if err != nil || len(vecs) == 0 {
 		return nil, errors.New("brain.Recall: embed failed: " + errStr(err))
 	}
-	// Pull a candidate pool (rerank narrows it). Salience nudge folded into order.
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, content, network, memory_type, COALESCE(source_kind,''),
-		       COALESCE(source_ref,''), importance, valid_at,
-		       (1 - (embedding <=> $1::vector)) + 0.15 * importance AS score
-		FROM memories
-		WHERE namespace = $2 AND invalid_at IS NULL AND tier = 'hot'
-		      AND embedding IS NOT NULL AND importance >= $3
-		ORDER BY embedding <=> $1::vector
-		LIMIT 40`,
-		vecLit(vecs[0]), q.Namespace, q.MinImportance)
+	// Hybrid candidate pool: dense vector + multilingual BM25 fused with RRF
+	// (recallSQL). If the BM25 layer is absent this errors on content_bm25 /
+	// to_bm25query, so transparently fall back to the vector-only query — recall
+	// still works, just without lexical fusion. Pull a wide pool; rerank narrows it.
+	const poolSize = 40
+	vec := vecLit(vecs[0])
+	pool, err := s.recallPool(ctx, db, recallSQL, vec, q.Namespace, q.Query, poolSize, q.MinImportance)
 	if err != nil {
-		return nil, errors.New("brain.Recall: query: " + err.Error())
-	}
-	defer rows.Close()
-	pool := []Recalled{}
-	for rows.Next() {
-		var r Recalled
-		if err := rows.Scan(&r.ID, &r.Content, &r.Network, &r.MemoryType, &r.SourceKind,
-			&r.SourceRef, &r.Importance, &r.ValidAt, &r.Score); err == nil {
-			pool = append(pool, r)
+		pool, err = s.recallPool(ctx, db, recallVecSQL, vec, q.Namespace, poolSize, q.MinImportance)
+		if err != nil {
+			return nil, errors.New("brain.Recall: query: " + err.Error())
 		}
 	}
 	// Rerank the pool with the cross-encoder when available.
@@ -223,8 +228,29 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	if len(pool) == 0 {
 		outcome = "empty"
 	}
+	// Populate L1 for subsequent identical recalls (best-effort; TTL-bounded).
+	s.putCachedRecall(ckey, pool)
 	s.event(ctx, db, "recall", q.Namespace, "", outcome, nil, int(time.Since(start).Milliseconds()))
 	return pool, nil
+}
+
+// recallPool runs a candidate query (recallSQL or recallVecSQL) and scans the
+// standard Recalled column set. Both queries share the same projection.
+func (s *Store) recallPool(ctx context.Context, db *sql.DB, query string, args ...any) ([]Recalled, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pool := []Recalled{}
+	for rows.Next() {
+		var r Recalled
+		if err := rows.Scan(&r.ID, &r.Content, &r.Network, &r.MemoryType, &r.SourceKind,
+			&r.SourceRef, &r.Importance, &r.ValidAt, &r.Score); err == nil {
+			pool = append(pool, r)
+		}
+	}
+	return pool, rows.Err()
 }
 
 func sortByScoreDesc(rs []Recalled) {

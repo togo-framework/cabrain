@@ -18,8 +18,11 @@ const proxy = {
   "/schemas": { target: apiTarget, changeOrigin: true },
 };
 
+// Allow the Coder subdomain proxy (…--…coder.fadymondy.com) to reach the dev server.
+const allowedHosts = [".coder.fadymondy.com", "localhost"];
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port, proxy },
-  preview: { port, proxy },
+  server: { port, proxy, allowedHosts },
+  preview: { port, proxy, allowedHosts },
 });
