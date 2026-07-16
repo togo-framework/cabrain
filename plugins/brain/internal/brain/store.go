@@ -219,6 +219,14 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	if len(pool) > q.Limit {
 		pool = pool[:q.Limit]
 	}
+	// 1-hop spreading activation (SPEC §4.2): pull memories that share an entity
+	// with the top results, tagged via_entity. DB-only; a no-op until Cognee has
+	// populated the entity graph (brain-cognee). Default-on per the tool contract.
+	if q.ExpandEntity && len(pool) > 0 {
+		if extra := s.expandEntities(ctx, db, q.Namespace, pool, maxExpand(q.Limit)); len(extra) > 0 {
+			pool = append(pool, extra...)
+		}
+	}
 	// Bump access stats for what we surfaced (best-effort) + emit the event.
 	for _, r := range pool {
 		_, _ = db.ExecContext(ctx,
@@ -232,6 +240,64 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	s.putCachedRecall(ckey, pool)
 	s.event(ctx, db, "recall", q.Namespace, "", outcome, nil, int(time.Since(start).Milliseconds()))
 	return pool, nil
+}
+
+// maxExpand budgets 1-hop neighbors relative to the primary result count.
+func maxExpand(limit int) int {
+	n := limit / 2
+	if n < 2 {
+		n = 2
+	}
+	return n
+}
+
+// expandEntities returns up to `budget` memories that share an entity with any of
+// the seed results (1-hop), scoped to the namespace/hot tier and excluding seeds.
+// via_entity names the linking entity. Passes seed ids as a comma-joined string
+// cast to uuid[] so it works over database/sql without a driver-specific array.
+func (s *Store) expandEntities(ctx context.Context, db *sql.DB, ns string, seed []Recalled, budget int) []Recalled {
+	if budget <= 0 || len(seed) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(seed))
+	ids := make([]string, 0, len(seed))
+	for _, r := range seed {
+		seen[r.ID] = true
+		ids = append(ids, r.ID)
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT ON (m.id)
+		       m.id::text, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),
+		       COALESCE(m.source_ref,''), m.importance, m.valid_at, e.name
+		FROM memory_entities seed_me
+		JOIN memory_entities nb_me ON nb_me.entity_id = seed_me.entity_id
+		     AND nb_me.memory_id <> seed_me.memory_id
+		JOIN entities  e ON e.id = seed_me.entity_id
+		JOIN memories  m ON m.id = nb_me.memory_id
+		WHERE seed_me.memory_id = ANY(string_to_array($1, ',')::uuid[])
+		      AND m.namespace = $2 AND m.invalid_at IS NULL AND m.tier = 'hot'
+		LIMIT $3`, strings.Join(ids, ","), ns, budget)
+	if err != nil {
+		return nil // entity tables absent / not populated → silently skip
+	}
+	defer rows.Close()
+	out := []Recalled{}
+	for rows.Next() {
+		var r Recalled
+		var via string
+		if err := rows.Scan(&r.ID, &r.Content, &r.Network, &r.MemoryType, &r.SourceKind,
+			&r.SourceRef, &r.Importance, &r.ValidAt, &via); err != nil {
+			continue
+		}
+		if seen[r.ID] {
+			continue
+		}
+		seen[r.ID] = true
+		r.ViaEntity = via
+		r.Score = 0.05 + 0.15*r.Importance // ranks below primary hits
+		out = append(out, r)
+	}
+	return out
 }
 
 // recallPool runs a candidate query (recallSQL or recallVecSQL) and scans the
