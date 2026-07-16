@@ -1,0 +1,6 @@
+name: brain-tei
+description: TEI provider for CaBrain — embeddings (BAAI/bge-m3, 1024-dim, multilingual) + rerank (bge-reranker-v2-m3). Publishes Embedder/Reranker onto the kernel for the brain plugin.
+priority: 90
+backend:
+  package: github.com/togo-framework/brain-tei
+commands: []

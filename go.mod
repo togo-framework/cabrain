@@ -7,6 +7,7 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.27.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/togo-framework/brain v0.0.0
+	github.com/togo-framework/brain-tei v0.0.0
 	github.com/togo-framework/cache v0.3.0
 	github.com/togo-framework/db-postgres v0.1.0
 	github.com/togo-framework/queue v0.3.0
@@ -24,6 +25,8 @@ require (
 // without the published github.com/togo-framework/brain repo. Removed when the
 // harness consumes the published plugin.
 replace github.com/togo-framework/brain => ./plugins/brain
+
+replace github.com/togo-framework/brain-tei => ./plugins/brain-tei
 
 require (
 	github.com/agnivade/levenshtein v1.2.0 // indirect

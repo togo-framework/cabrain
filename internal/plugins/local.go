@@ -6,4 +6,5 @@ package plugins
 // blank import.
 import (
 	_ "github.com/togo-framework/brain"
+	_ "github.com/togo-framework/brain-tei"
 )
