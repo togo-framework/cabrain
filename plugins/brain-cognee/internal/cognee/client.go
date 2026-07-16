@@ -16,6 +16,7 @@ package cognee
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -190,8 +191,99 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// DatasetGraphURL is the endpoint for reading a built graph (entity mirroring,
-// Phase 2). Exposed so the mirror step can be wired without re-deriving paths.
+// DatasetGraphURL is the endpoint for reading a built graph. Exposed so the mirror
+// step can be wired without re-deriving paths.
 func (c *Client) DatasetGraphURL(datasetID string) string {
 	return c.base + "/api/v1/datasets/" + url.PathEscape(datasetID) + "/graph"
+}
+
+// --- graph mirroring (SPEC §7) ------------------------------------------------
+//
+// GraphDTO mirrors Cognee's GET /api/v1/datasets/{id}/graph response (from its
+// public OpenAPI): nodes carry an id/label/type/properties, edges a source/target/
+// label. CaBrain mirrors the entity nodes into its own `entities` table so the
+// Graph Explorer + 1-hop expansion read from Postgres (not a live Cognee call on
+// the hot path).
+
+type GraphDTO struct {
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
+}
+
+type GraphNode struct {
+	ID         string         `json:"id"`
+	Label      string         `json:"label"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+}
+
+type GraphEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Label  string `json:"label"`
+}
+
+// FetchGraph reads and parses the built knowledge graph for a dataset.
+func (c *Client) FetchGraph(ctx context.Context, datasetID string) (*GraphDTO, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.DatasetGraphURL(datasetID), nil)
+	if err != nil {
+		return nil, err
+	}
+	b, err := c.recv(req)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGraph(b)
+}
+
+// ParseGraph decodes a GraphDTO body. Split out so it is unit-testable without a
+// live (authenticated) Cognee.
+func ParseGraph(b []byte) (*GraphDTO, error) {
+	var g GraphDTO
+	if err := json.Unmarshal(b, &g); err != nil {
+		return nil, fmt.Errorf("cognee: parse graph: %w", err)
+	}
+	return &g, nil
+}
+
+// EntityNames returns the distinct, non-empty entity labels from the graph — the
+// set CaBrain upserts into its `entities` table for a namespace. Cognee tags
+// structural nodes (documents, chunks) with a Type; when types are present we keep
+// only entity-like nodes, otherwise (older graphs) we fall back to all labeled
+// nodes. Deterministic order for stable upserts/tests.
+func (g *GraphDTO) EntityNames() []string {
+	typed := false
+	for _, n := range g.Nodes {
+		if n.Type != "" {
+			typed = true
+			break
+		}
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range g.Nodes {
+		if n.Label == "" {
+			continue
+		}
+		if typed && !isEntityType(n.Type) {
+			continue
+		}
+		if seen[n.Label] {
+			continue
+		}
+		seen[n.Label] = true
+		out = append(out, n.Label)
+	}
+	return out
+}
+
+// isEntityType keeps semantic entity nodes, dropping Cognee's structural node types
+// (documents, chunks, the raw text carriers).
+func isEntityType(t string) bool {
+	switch strings.ToLower(t) {
+	case "documentchunk", "textdocument", "document", "chunk", "textsummary":
+		return false
+	default:
+		return true
+	}
 }
