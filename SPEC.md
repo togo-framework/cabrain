@@ -34,6 +34,40 @@ The reference model is the human brain, with the biological ceilings deliberatel
 
 ---
 
+## 0.1 Project & plugin shape (how CaBrain is packaged)
+
+CaBrain is a **project composed of shippable togo plugins** — nothing is a monolith, so every
+capability can be open-sourced and installed independently, the togo way.
+
+- **`cabrain`** — the *project* (this monorepo + dev harness; togo app, module
+  `github.com/togo-framework/cabrain`; repo `togo-framework/cabrain`). It hosts the plugins,
+  the design docs, and the `generate → migrate → serve` loop that exercises them.
+- **`brain`** — the *core memory-organ plugin* (module `github.com/togo-framework/brain`; repo
+  `togo-framework/brain`). Owns the schema (§3), the write/read pipelines (§4), the MCP surface
+  (§5), and capture (§6). Installable anywhere with `togo install togo-framework/brain`.
+- **provider plugins** — one plugin per external dependency, registered on `brain` behind
+  interfaces (driver-registry pattern, like togo's own `ai-openai` / `storage-s3` / `cache-redis`):
+
+  | Plugin | Provides | Interface |
+  |---|---|---|
+  | `brain-tei` | embeddings + rerank (TEI → Qwen3-Embedding-0.6B, bge-reranker-v2-m3) | `Embedder`, `Reranker` |
+  | `brain-cognee` | cognify engine — entity/graph extraction | `Engine` |
+  | `brain-cold-*` | cold-tier demotion (Iceberg/Parquet on S3/MinIO) — Phase 2 | (cold store) |
+  | `brain-redis` *(optional)* | L1 working-memory cache (§2.1) | via `togo-framework/cache` |
+
+  Absent a provider, the dependent op returns a clear "install `brain-<x>`" error — never a silent
+  degrade. This keeps `brain` engine-agnostic (SPEC §8): swapping Cognee, the embedder, or the cold
+  store is a plugin swap, not a rewrite.
+
+**Plugin owns its schema in Go.** Per the togo plugin convention (see `cache`/`settings`), `brain`
+ships its DDL embedded (`internal/brain/schema.sql`, applied by `Migrate`) and writes its own
+queries — it does **not** route the exotic postgres schema (`vector`, BM25, partitioning) through
+the app-level sqlc/atlas `make:resource` flow. This supersedes the literal "generate the resources
+→ sqlc + Atlas" wording in §7 where they conflict; the load-bearing artifacts are the schema (§3)
+and the tool contracts (§5.1), which the plugin-native Go path realizes on postgres.
+
+---
+
 ## 1. Requirements
 
 ### Functional
@@ -76,6 +110,29 @@ Infrastructure is **not** provisioned by this spec. A separate infra agent stand
 
 Secrets arrive via the app's env/secret mechanism from the infra agent; the build never embeds credential values. If any output is missing, stop and request it — do not fall back to provisioning infra inline.
 
+### 1.5.1 As-provisioned (infra §4 bundle + accepted deviations)
+
+The actual environment differs from the spec's assumptions in ways that don't change the CaBrain
+contracts (full detail in `docs/decisions.md` D5). Accepted:
+
+- **Host:** P920 workstation, WSL2 + Docker Desktop — **not** Proxmox. Reverse proxy is **NPM**
+  (Nginx Proxy Manager), not Caddy. From the workspace, stack services resolve at
+  `host.docker.internal` (Postgres :5432, Redis :6379, NATS :4222); the CaBrain app runs as a
+  container on Docker net `stack_stacknet`, where infra uses internal names (`pg`, `tei-embed`,
+  `cognee`, `ollama`, `minio`).
+- **Cold tier:** MinIO (S3-compatible, bucket `cabrain-cold`) substitutes for R2/GCS — the
+  `data-iceberg`/`pg_duckdb` path is unchanged.
+- **Extraction LLM:** Ollama as a stack container (`mistral:7b-instruct` placeholder → `gpt-oss:20b`).
+- **Postgres:** one shared PG re-imaged to give CaBrain its extensions, with a dedicated `cabrain`
+  DB + `cabrain_sleep` role.
+- **Also live and usable:** **Redis** (L1 cache, §2.1) and **NATS**.
+
+**Status (as of build):** the finalizer had not completed — TEI models still downloading, Cognee
+waiting on TEI, the `cabrain` DB not yet reachable from the workspace (the workspace-reachable
+Postgres is a vanilla PG16 without the required extensions). So live `migrate`/`serve` and
+retain/recall **execution** stay gated (Blocker B) until the finalized `.env` + `INFRA-CaBrain.md`
+land and the §3 extension checks pass. Schema-static work (build, sqlc, codegen) proceeds regardless.
+
 ---
 
 ## 2. High-level architecture
@@ -85,19 +142,19 @@ Secrets arrive via the app's env/secret mechanism from the infra agent; the buil
                  Memory Tool  ·  MCP tools
                           │
         ┌─────────────────▼──────────────────┐
-        │  CaBrain plugin (ToGO)              │
+        │  brain plugin (togo)                │
         │  ── API: retain · recall · reflect  │
         │  ── forget · improve                │
-        │  ── Cognee engine (wrapped)         │
+        │  ── engine: brain-cognee (wrapped)  │
         │  ── salience · reconsolidation      │
-        └───────┬───────────────────┬─────────┘
-      writes    │                   │  reads
-        ┌───────▼──────┐    ┌───────▼────────┐
-        │  HOT tier     │    │ Embedding/rerank│
-        │  togo-postgres│    │ TEI on RTX 3060 │
-        │  VectorChord  │    │ Qwen3-Embedding │
-        │  + vchord_bm25│    │ + bge-reranker  │
-        └───────┬───────┘    └────────────────┘
+        └──┬────────┬───────────────┬─────────┘
+   reads   │ writes │               │  reads
+   ┌───────▼─┐ ┌────▼─────────┐ ┌───▼────────────┐
+   │ L1 cache│ │  HOT tier     │ │ brain-tei      │
+   │ Redis   │ │  togo-postgres│ │ TEI · RTX 3060 │
+   │ (§2.1)  │ │  VectorChord  │ │ Qwen3-Embedding│
+   │         │ │  + vchord_bm25│ │ + bge-reranker │
+   └─────────┘ └───────┬───────┘ └────────────────┘
                 │ sleep (scheduler workers)
         ┌───────▼───────────────────┐
         │  COLD tier                 │
@@ -108,10 +165,25 @@ Secrets arrive via the app's env/secret mechanism from the infra agent; the buil
 
 **Memory subsystems (the brain map):**
 - **Working memory** = the consumer's context window + the MCP gateway (central executive). Not stored by CaBrain; it decides what to page in.
+- **L1 cache (Redis)** = a fast get/set layer in front of the hot tier (§2.1). Caches recent recall result-sets, hot rows by id, and content→embedding for dedup. Never authoritative — a cold Redis costs latency, never correctness.
 - **Hippocampus (hot tier)** = fresh, individually-stored episodic memories in `togo-postgres`, VectorChord-indexed. Small and fast.
 - **Neocortex (cold tier)** = consolidated semantic facts + entity summaries; raw episodics demoted to Iceberg. Unbounded.
 - **Amygdala** = `importance` score computed at write time, gating consolidation priority and decay rate.
 - **Sleep** = `scheduler` workers doing consolidation, dedup, decay, tiering, index maintenance — always offline, never on the recall path.
+
+### 2.1 L1 cache tier (Redis) — protecting N1
+
+A Redis fast-path sits between working memory and the PG hot tier (Redis is live on the stack).
+It exists to keep p95 `recall` well under 300 ms (N1) and to cut redundant embedding calls.
+
+- **Caches:** (a) recent `recall` query→result sets (short TTL), (b) hot memory rows by id,
+  (c) content→embedding for write-time dedup. **PG remains the source of truth**; Redis is
+  cache-aside / write-through and is invalidated on `retain`/`reconsolidate`/`forget` of touched keys.
+- **How:** app-level cache-aside via **`togo-framework/cache` + `cache-redis`** (Phase-1 default —
+  idiomatic, portable, no PG extension). The `redis_fdw` / PG↔Redis-connector approach ("pg_redis")
+  is a **revisit** option if a SQL-side join against cached data is ever needed.
+- **Packaging:** reuse `cache-redis`, or a thin `brain-redis` plugin wrapping it with brain's key
+  schema + invalidation. Never on the write-correctness path — only latency.
 
 ---
 
@@ -328,9 +400,17 @@ The point of Phase 1 is not a clever demo; it is **memory mass**. Run every sess
 
 ### Phase 1 — the brain + capture  ← *ship this first*
 1. **Infra first.** Confirm the infra agent's outputs are available (see `INFRA-CaBrain.md`) and its acceptance checks pass — DB reachable with the required extensions present, TEI returns an embedding, Cognee `/health` responds, cold store writable. Load the outputs (§1.5) as env. **Do not provision infra in this phase.**
-2. `togo new cabrain` (or add to an existing togo app), database = `togo-postgres`, pointed at `CABRAIN_DATABASE_URL`. Wire embeddings/rerank to `TEI_EMBEDDINGS_URL` / `TEI_RERANKER_URL`, the engine to `COGNEE_API_URL`, the extraction LLM to `EXTRACTION_LLM_*`, and the cold tier to `COLD_STORE_*`.
-3. `togo make:plugin cabrain`. Generate the `memories`, `entities`, `memory_entities`, `memory_events`, `namespace_grants` resources → sqlc + Atlas + REST/GraphQL.
-4. Implement `retain` (§4.1) and `recall` (§4.2 incl. RRF + rerank + 1-hop expansion), wrapping Cognee as the engine. Benchmark `Qwen3-Embedding-0.6B` vs the `BGE-M3` fallback on real Arabic pairs — embedding dimension is a one-time choice.
+2. **Project + plugin scaffold (done).** `cabrain` togo app (harness, `--db togo-postgres`) hosts the
+   **`brain`** plugin (`togo make:plugin`), wired via `require`+`replace`. Config (DB, TEI, Cognee,
+   extraction LLM, cold store, Redis) comes from `.env`/`togo.yaml`, never hard-coded (§1.5).
+3. **Schema in the plugin (done).** `brain` embeds the §3 DDL (`internal/brain/schema.sql`) and applies
+   it with `Migrate` — the togo plugin-schema convention (§0.1), not the app-level sqlc/atlas
+   `make:resource` flow (which can't carry `vector`/BM25/partitioning). Queries are hand-written pgx.
+4. **Providers as plugins.** Stand up **`brain-tei`** (`Embedder`+`Reranker`) and **`brain-cognee`**
+   (`Engine`) as driver plugins registered on `brain` (§0.1). Then implement `retain` (§4.1) and
+   `recall` (§4.2 incl. RRF + rerank + 1-hop expansion) against them, with the **Redis L1 cache**
+   (§2.1) on the read path. Benchmark `Qwen3-Embedding-0.6B` vs the `BGE-M3` fallback on real Arabic
+   pairs — embedding dimension is a one-time choice (locked to 1024 by infra pending that benchmark).
 5. Expose MCP tools (§5.1) + the Claude Code Memory Tool backend (§5.2).
 6. Wire capture mode (§6) to one Claude Code consumer.
 
@@ -365,10 +445,20 @@ The point of Phase 1 is not a clever demo; it is **memory mass**. Run every sess
 - **Local embeddings (RTX 3060) vs API:** zero per-token cost + full data control + Arabic strength, at the cost of running TEI. **Revisit** the model (`Qwen3` vs `BGE-M3`) only after benchmarking on a few hundred real Sentra/Orchestra Arabic memory pairs. Note: **changing embedding dimension later means re-embedding everything** — pick once.
 - **Salience as a static default:** the biggest quality risk if left flat. **Revisit** the write-time importance formula continuously; it gates both what gets consolidated first and what decays slowest.
 - **Unlimited retention vs cost:** "never delete" is real via the cold tier, but object-store + a growing fleet of frontier-model agents is not free. `ai-gateway` spend caps + `ai-agentops` metering are load-bearing from Phase 3, not optional.
+- **Plugin decomposition (`brain` + `brain-*`) vs one plugin:** splitting each provider into its own
+  plugin (§0.1) buys independent shipping, engine-agnosticism (swap = plugin swap), and clean OSS
+  boundaries — at the cost of more repos and an interface seam per provider. Chosen because it matches
+  togo's driver-plugin grain and makes the Cognee fallback (§8, first bullet) a real swap. **Revisit**
+  only if the seam overhead outweighs the modularity (it won't for the providers named).
+- **Redis L1 cache vs PG-only:** the cache (§2.1) protects N1 and cuts embedding calls, but adds an
+  invalidation surface — a stale entry after `retain`/`reconsolidate`/`forget` would serve outdated
+  recall. Mitigation: PG stays authoritative, TTLs short, explicit invalidation on write. **Revisit**
+  the `redis_fdw` ("pg_redis") option only if a SQL-side join to cached data is needed; the app-level
+  cache is simpler and sufficient for Phase 1.
 - **Shared brain vs leakage:** the security boundary is `namespace` + `visibility` + `namespace_grants` + `ontology`. This is what stands between "one brain for the org" and "one agent leaking another's secrets." Treat scoping bugs as Sev-1.
 
 ---
 
 ## 9. One-line summary
 
-**Build CaBrain as a ToGO plugin wrapping Cognee on `togo-postgres` (VectorChord + BM25 + pgvector), with hippocampal hot / cortical cold tiers, salience-gated sleep consolidation, and reconsolidation-on-recall — expose it as MCP tools + a Claude Code Memory Tool backend, run it in capture mode across every session to build memory mass, and only then attach the fleet (Omnigent/Coder/Autopilot) and the interfaces (live/WhatsApp) as new mouths on the same brain.**
+**Build CaBrain as the `cabrain` project of togo plugins — the `brain` organ plugin on `togo-postgres` (VectorChord + BM25 + pgvector) with a Redis L1 cache, hippocampal hot / cortical cold tiers, salience-gated sleep consolidation, and reconsolidation-on-recall, plus one provider plugin per dependency (`brain-tei`, `brain-cognee`, `brain-cold-*`) — expose it as MCP tools + a Claude Code Memory Tool backend, run it in capture mode across every session to build memory mass, and only then attach the fleet (Omnigent/Coder/Autopilot) and the interfaces (live/WhatsApp) as new mouths on the same brain.**
