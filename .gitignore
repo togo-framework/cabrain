@@ -16,3 +16,7 @@
 .pg-secrets
 .minio-secrets
 *.log
+
+# Python
+__pycache__/
+*.pyc
