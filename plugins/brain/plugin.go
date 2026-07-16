@@ -26,6 +26,10 @@ func init() {
 		k.Router.Get("/api/brain/graph", svc.Graph)
 		k.Router.Post("/api/brain/recall", svc.Recall)
 		k.Router.Post("/api/brain/retain", svc.Retain)
+		// Point-lookup + lifecycle (SPEC §5.1) — pure SQL, work before brain-tei.
+		k.Router.Get("/api/brain/memory", svc.Get)
+		k.Router.Post("/api/brain/forget", svc.Forget)
+		k.Router.Post("/api/brain/share", svc.Share)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name)

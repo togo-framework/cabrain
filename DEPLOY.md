@@ -80,6 +80,26 @@ Postgres stays authoritative — the cache only skips a repeat embed+query.
   Redis L1 stays optional until Redis is attached to `stack_stacknet`; the in-process L1 is
   the default and needs nothing.
 
+## MCP tools (SPEC §5.1)
+
+`cmd/brain-mcp` is a stdio MCP server exposing the six memory tools
+(`memory_retain`, `memory_recall`, `memory_recall_archive`, `memory_get`,
+`memory_forget`, `memory_share`) — a thin adapter over the brain REST surface, so
+scoping/validation stay server-side. Verified end-to-end against the live DB:
+share/get/forget execute; retain/recall reach the TEI boundary and return a clean
+`unavailable`. Wire it for an agent:
+
+```bash
+go install ./cmd/brain-mcp     # → $GOBIN/brain-mcp on PATH
+```
+```jsonc
+// .mcp.json (or Claude Code MCP config)
+{"mcpServers":{"cabrain":{"command":"brain-mcp",
+  "env":{"CABRAIN_API_URL":"http://localhost:8080","CABRAIN_AGENT_ID":"claude-code"}}}}
+```
+`CABRAIN_AGENT_ID` is the session identity used for grant checks (F5); empty = the
+trusted/no-enforcement context (namespace scoping still isolates data).
+
 ## Already done / follow-ups
 
 - **Done:** schema migrated to `cabrain` (memories+default partition, entities, memory_entities,
