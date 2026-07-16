@@ -1,0 +1,6 @@
+name: brain-cognee
+description: Cognee provider for CaBrain — the cognify engine (entity/relation graph). Publishes Engine onto the kernel so the brain enriches retained memories off the hot path. Config via COGNEE_API_URL / COGNEE_API_TOKEN.
+priority: 90
+backend:
+  package: github.com/togo-framework/brain-cognee
+commands: []

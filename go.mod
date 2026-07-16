@@ -7,6 +7,7 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.27.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/togo-framework/brain v0.0.0
+	github.com/togo-framework/brain-cognee v0.0.0
 	github.com/togo-framework/brain-tei v0.0.0
 	github.com/togo-framework/cache v0.3.0
 	github.com/togo-framework/db-postgres v0.1.0
@@ -27,6 +28,8 @@ require (
 replace github.com/togo-framework/brain => ./plugins/brain
 
 replace github.com/togo-framework/brain-tei => ./plugins/brain-tei
+
+replace github.com/togo-framework/brain-cognee => ./plugins/brain-cognee
 
 require github.com/jackc/pgx/v5 v5.7.1
 

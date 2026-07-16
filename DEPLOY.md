@@ -117,5 +117,13 @@ trusted/no-enforcement context (namespace scoping still isolates data).
   pg_partman monthly rollover (Phase 2 tiering) can replace the manual DEFAULT partition.
 - **Ops CLI:** `cmd/brainctl` (`inspect` | `migrate` | `bm25` | `bm25-test`) — connects with
   `DATABASE_URL` (pgx); use it on-stack to apply/verify the BM25 layer.
-- **Next (app):** 1-hop entity expansion in recall, the `brain-cognee` engine plugin for the entity
-  graph, MCP tools (§5.1), and the capture-mode hook (§6).
+- **Cognify engine:** `plugins/brain-cognee` publishes the `Engine` — on retain the brain calls
+  Cognee (`POST /api/v1/add` → `POST /api/v1/cognify`, run-in-background) off the hot path to build
+  the entity graph. Boots active from `COGNEE_API_URL`. **Auth is deployment-specific:** the token
+  is sent as `Authorization: Bearer` by default; override with `COGNEE_AUTH_HEADER` /
+  `COGNEE_AUTH_PREFIX` (the workspace probe returned 401, so confirm the scheme on-stack).
+  Entity-graph *mirroring* into CaBrain's `entities`/`memory_entities` (so Graph Explorer + 1-hop
+  read from Postgres) is the next step — the client exposes `Search` + `DatasetGraphURL` for it.
+- **Next (app):** mirror Cognee's graph into `entities`/`memory_entities`; the retain
+  ADD/UPDATE/INVALIDATE/NOOP write-decision (§4.1, needs the extraction LLM); cold-tier demotion
+  (Phase 2) to light up `memory_recall_archive`.
