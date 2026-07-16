@@ -16,8 +16,16 @@ const Name = "brain"
 func init() {
 	togo.RegisterProviderFunc(Name, togo.PriorityLate, func(k *togo.Kernel) error {
 		svc := brain.New(k)
-		// Health probe; the memory surface (retain/recall/…) is wired as it lands.
+		// Health + the console read-API (always safe; defensive when the schema
+		// isn't live). retain/recall return a structured "needs DB + brain-tei"
+		// error until Blocker B clears.
 		k.Router.Get("/api/brain/ping", svc.Ping)
+		k.Router.Get("/api/brain/stats", svc.Stats)
+		k.Router.Get("/api/brain/activity", svc.Activity)
+		k.Router.Get("/api/brain/namespaces", svc.Namespaces)
+		k.Router.Get("/api/brain/graph", svc.Graph)
+		k.Router.Post("/api/brain/recall", svc.Recall)
+		k.Router.Post("/api/brain/retain", svc.Retain)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name)

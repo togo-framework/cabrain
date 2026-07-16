@@ -1,67 +1,29 @@
-import { createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet, redirect } from "@tanstack/react-router";
-import { SentraLoading } from "@togo-framework/ui";
+import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { Providers } from "./providers";
-import { sessionMe } from "./lib/auth";
-import { Welcome } from "./routes/welcome";
-import { Login } from "./routes/login";
-import { Register } from "./routes/register";
-import { Reset } from "./routes/reset";
-import { AppLayout } from "./routes/app-layout";
+import { BrainLayout } from "./routes/brain-layout";
+import { BrainDashboard } from "./routes/brain-dashboard";
+import { BrainSearch } from "./routes/brain-search";
+import { BrainGraph } from "./routes/brain-graph";
+import { BrainBrains } from "./routes/brain-brains";
+import { BrainSessions } from "./routes/brain-sessions";
 
-// The authenticated admin surface (dashboard charts/widgets/ThemePicker, the
-// resource tables/forms/infolists) is the heavy part of the bundle — lazy-load it
-// so it splits into its own chunk and the public/auth first paint stays small.
-// The router's pending component (SentraLoading) shows while the chunk loads.
-const Dashboard = lazyRouteComponent(() => import("./routes/dashboard"), "Dashboard");
-const AdminHome = lazyRouteComponent(() => import("./routes/admin"), "AdminHome");
-const AdminResource = lazyRouteComponent(() => import("./routes/admin-resource"), "AdminResource");
-const Profile = lazyRouteComponent(() => import("./routes/profile"), "Profile");
-
+// CaBrain memory console — the Cognee-style surface over the brain plugin.
+// Un-gated: this is a memory tool, not an auth app; the whole console lives under
+// the BrainLayout shell (sidebar + header).
 const rootRoute = createRootRoute({ component: () => (<Providers><Outlet /></Providers>) });
 
-// Already signed in → skip the auth pages and go straight to the dashboard.
-const redirectIfAuthed = async () => {
-  if (await sessionMe()) throw redirect({ to: "/dashboard" });
-};
-
-const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Welcome });
-const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: Login, beforeLoad: redirectIfAuthed });
-const registerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/register", component: Register, beforeLoad: redirectIfAuthed });
-const resetRoute = createRoute({ getParentRoute: () => rootRoute, path: "/reset", component: Reset });
-
-// Protected shell. The guard runs in beforeLoad — BEFORE the layout/children render —
-// so unauthenticated visitors are redirected to /login without the private page ever
-// painting (the router shows the pending loader while the check runs). The resolved
-// user is returned as route context so children don't re-fetch /me.
-const appRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  id: "_app",
-  component: AppLayout,
-  beforeLoad: async () => {
-    const me = await sessionMe();
-    if (!me) throw redirect({ to: "/login" });
-    return { me };
-  },
-});
-const dashboardRoute = createRoute({ getParentRoute: () => appRoute, path: "/dashboard", component: Dashboard });
-const adminRoute = createRoute({ getParentRoute: () => appRoute, path: "/admin", component: AdminHome });
-const resourceRoute = createRoute({ getParentRoute: () => appRoute, path: "/admin/$resource", component: AdminResource });
-const profileRoute = createRoute({ getParentRoute: () => appRoute, path: "/profile", component: Profile });
+const consoleRoute = createRoute({ getParentRoute: () => rootRoute, id: "_console", component: BrainLayout });
+const dashboardRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/", component: BrainDashboard });
+const searchRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/search", component: BrainSearch });
+const graphRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/graph", component: BrainGraph });
+const brainsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/brains", component: BrainBrains });
+const sessionsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/sessions", component: BrainSessions });
 
 const routeTree = rootRoute.addChildren([
-  indexRoute, loginRoute, registerRoute, resetRoute,
-  appRoute.addChildren([dashboardRoute, adminRoute, resourceRoute, profileRoute]),
+  consoleRoute.addChildren([dashboardRoute, searchRoute, graphRoute, brainsRoute, sessionsRoute]),
 ]);
 
-export const router = createRouter({
-  routeTree,
-  defaultPreload: "intent",
-  // Branded full-screen loader while a route's beforeLoad (e.g. the auth check) runs.
-  // 150ms delay so cached/instant navigations don't flash it.
-  defaultPendingComponent: () => <SentraLoading />,
-  defaultPendingMs: 150,
-  defaultPendingMinMs: 300,
-});
+export const router = createRouter({ routeTree, defaultPreload: "intent" });
 
 declare module "@tanstack/react-router" {
   interface Register { router: typeof router }
