@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS memories (
   source_ref       text,                                    -- session/thread/run id (provenance)
 
   -- retrieval
-  embedding        vector(1024),                            -- Qwen3-Embedding-0.6B, 1024-dim (locked by infra)
+  embedding        vector(1024),                            -- BAAI/bge-m3, 1024-dim, multilingual (locked by infra; TEI 1.6)
 
   -- amygdala (salience)
   importance       real        NOT NULL DEFAULT 0.5,        -- [0,1]; gates consolidation + decay
@@ -82,16 +82,16 @@ CREATE TABLE IF NOT EXISTS memories (
   CONSTRAINT memories_importance_chk  CHECK (importance >= 0.0 AND importance <= 1.0)
 ) PARTITION BY RANGE (valid_at);
 
--- [V2] pg_partman v5: monthly native partitions; old/invalidated partitions are the
--- demotion unit for the cold tier. Verify partman version before running.
-SELECT partman.create_parent(
-  p_parent_table    => 'public.memories',
-  p_control         => 'valid_at',
-  p_interval        => '1 month',
-  p_type            => 'range'
-);
--- v4 fallback (if the installed partman is < 5.0):
---   SELECT partman.create_parent('public.memories', 'valid_at', 'native', 'monthly');
+-- [V2] Partitioning. The table stays PARTITION BY RANGE (valid_at); a DEFAULT
+-- partition catches all rows so writes work immediately with no partman dependency.
+CREATE TABLE IF NOT EXISTS memories_default PARTITION OF memories DEFAULT;
+--
+-- pg_partman 5.4.3 monthly rollover + retention (the cold-tier demotion unit, Phase 2)
+-- is added later — it needs the `cabrain` role granted on partman's config tables
+-- (part_config / part_config_sub), which only a superuser/the partman installer can do
+-- (INFRA TODO). Then, to split the default into monthly partitions:
+--   SELECT public.create_parent(p_parent_table => 'public.memories',
+--     p_control => 'valid_at', p_interval => '1 month', p_type => 'range');
 
 -- Hybrid retrieval indexes (created on the partitioned parent → propagate to partitions).
 --
@@ -101,16 +101,15 @@ SELECT partman.create_parent(
 CREATE INDEX IF NOT EXISTS memories_vec
   ON memories USING hnsw (embedding vector_cosine_ops);
 
--- [V1] BM25 long-text, Arabic-capable. vchord_bm25 + pg_tokenizer wiring is version
--- sensitive. Intended shape (SPEC §3.2):
---   CREATE INDEX memories_bm25 ON memories USING bm25 (id, content)
---     WITH (tokenizer='multilingual');
--- Newer vchord_bm25 requires an explicit tokenizer/model first, e.g.:
---   SELECT create_tokenizer('multilingual', $$ pre_tokenizer = "icu" $$);   -- Arabic via ICU
---   ALTER TABLE memories ADD COLUMN content_bm25 bm25vector;                  -- generated from content
+-- [V1] BM25 long-text, Arabic-capable — CONFIRMED API for vchord_bm25 0.3.0 +
+-- pg_tokenizer 0.1.1 on the live cabrain DB. Applied by bm25.sql (separate, so a
+-- tokenizer-config issue never blocks the core schema), and populated on the retain
+-- path (content_bm25 = tokenize(content, 'cabrain_ml')). Shape:
+--   SELECT create_tokenizer('cabrain_ml', $$ pre_tokenizer = "unicode_segmentation" $$);
+--   ALTER TABLE memories ADD COLUMN content_bm25 bm25vector;   -- populated per-write via tokenize()
 --   CREATE INDEX memories_bm25 ON memories USING bm25 (content_bm25 bm25_ops);
--- ACTION: confirm the exact API on the installed vchord_bm25 before first migrate, then
--- pin ONE form here. Must NOT fall back to the default English tokenizer (N4).
+-- Recall ranks with:  content_bm25 <&> to_bm25query('memories_bm25', tokenize($q,'cabrain_ml'))
+-- (lower = better). Verified multilingual/Arabic by infra §5.2. NOT the English tokenizer (N4).
 
 CREATE INDEX IF NOT EXISTS memories_ns
   ON memories (namespace, tier) WHERE invalid_at IS NULL;   -- hot scoped scans
