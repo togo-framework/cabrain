@@ -19,7 +19,15 @@ sudo -E DOCKER_CONFIG=/tmp/dc-clean DOCKER_BUILDKIT=1 docker build -t cabrain:la
 . /mnt/c/services/cabrain/.env
 CABRAIN_PW=$(echo "$CABRAIN_DATABASE_URL" | sed -E 's|.*://cabrain:([^@]+)@.*|\1|')
 
-sudo -E docker rm -f cabrain 2>/dev/null || true
+# Remove ANY stale/duplicate app container before starting — a leftover from an
+# earlier deploy (any cabrain* name, and anything built from the app image) left
+# the NPM upstream round-robining onto an OLD, unenforced container, so the public
+# URL was intermittently reachable without auth. Never touch the cabrain-deploy
+# webhook receiver (different image, keeps the pipeline alive).
+for c in $(sudo docker ps -a --format '{{.Names}}' | grep -E '^cabrain' | grep -vx 'cabrain-deploy'); do
+  echo "removing stale app container: $c"; sudo docker rm -f "$c" 2>/dev/null || true
+done
+for c in $(sudo docker ps -aq --filter ancestor=cabrain:latest); do sudo docker rm -f "$c" 2>/dev/null || true; done
 sudo -E docker run -d --name cabrain \
   --network stack_stacknet --restart unless-stopped \
   --env-file /mnt/c/services/cabrain/.env \
