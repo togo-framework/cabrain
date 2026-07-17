@@ -4,18 +4,28 @@ CaBrain has ingested the FlowOS (OneStudio hub) knowledge into the `flowos`
 namespace so any MCP-connected session can ask about a venture, agent, person,
 learning, or lean canvas and get the answer back from memory.
 
-## What's ingested (namespace `flowos`, ~303 memories)
+## What's ingested (namespace `flowos`, ~1,780 memories)
 
-| Type | Count | Source |
-|---|---|---|
-| Ventures | 57 | FlowOS MCP `list_ventures` + `get_venture` |
-| Domain-expert agents | 40 | `list_agents` + `get_agent` |
-| Learnings | 178 | `list_learnings` (global + per-venture, deduped) |
-| Lean canvases | 57 | `get_lean_canvas` |
-| People | 21 | `who_owns_agent` (agent owners) |
+Two passes: the FlowOS **MCP** (structured API) and the **full hub Postgres DB**
+(`onestudio_hub`, via an SSH tunnel) — everything except high-frequency telemetry
+(feature/transition/claude-activity events, github metrics, views, tokens).
 
-Each memory embeds via TEI (bge-m3) and is recallable by vector + BM25 + rerank.
-Re-run / extend the ingestion with `scratchpad/ingest.py` + `enrich.py`.
+| Type | Source |
+|---|---|
+| Ventures (66, full records + team) | DB `ventures` + MCP `get_venture` |
+| Domain-expert agents (40, en+ar, skills) | DB `agents` + MCP `get_agent` |
+| People (46, names/emails/roles + venture memberships) | DB `users` + `venture_members` |
+| Issues (597 — title, description, status, priority) | DB `issues` |
+| Posts / status feed (930) | DB `posts` |
+| Learnings (178) | MCP `list_learnings` + DB |
+| Lean canvases (57) | MCP `get_lean_canvas` |
+| Roadmaps (178), Releases (69), Goals (222), Harvested research (82), Tasks (68) | DB |
+
+Near-duplicate/templated rows collapse via the §4.1 write-decision (that's why the
+row total is ~1,780, not the raw ~2,600). Each memory embeds via TEI (bge-m3) and is
+recallable by vector + BM25 + rerank. Re-run / extend with `scratchpad/ingest.py`,
+`enrich.py`, and `dbingest.py` (the DB pass needs the SSH tunnel:
+`ssh -L 15432:<DB_HOST>:5432 <USER>@<JUMP_HOST>`).
 
 ## How to query it (from a new Claude Code session)
 
