@@ -38,10 +38,16 @@ Use concise, keyword-forward queries (`"Sentra"`, `"PDPL compliance kit"`,
 `"OAuth login issue"`) — they rank cleaner than long sentences. Recall more than one
 phrasing if the first is thin.
 
-## R7 — Namespaces
-`flowos` = the FlowOS/OneStudio brain (default for studio questions). Use a different
-namespace only when the user is clearly working in a separate project/scope; never
-mix scopes in one query.
+## R7 — Namespaces (pick the right brain)
+- `flowos` — the FlowOS / OneStudio hub brain (ventures, people, agents, issues,
+  posts, learnings). Default for studio/venture/people questions.
+- `avo` — the **AVO "Founder Readiness Lab"** brain: the full markdown of the AVO
+  repo (board, playbooks, kaizen engine, kickstart legal/finance, pitch/fundraising,
+  research, theses, drills). Use for any question about AVO, founder readiness, the
+  board pack, playbooks, or KSA/GCC founder prep.
+
+Pick the namespace that matches the question; never mix scopes in one query. If it's
+ambiguous which brain, recall both (two calls) and merge.
 
 ## R8 — Keep the brain reachable
 The tools need the app on `:8080`. If `memory_recall` fails to connect, tell the user

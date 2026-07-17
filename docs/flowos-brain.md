@@ -1,3 +1,16 @@
+# CaBrain brains — FlowOS & AVO
+
+CaBrain hosts multiple namespaces ("brains"):
+- **`flowos`** — the FlowOS / OneStudio hub (below).
+- **`avo`** (~2,490 memories) — the AVO "Founder Readiness Lab" repo
+  (`onestudio-exp/AVO`) markdown: 359 files chunked by heading (board pack,
+  playbooks, kaizen engine, kickstart legal/finance, pitch/fundraising, research,
+  theses, drills). Re-run with `scratchpad/avoingest.py` (needs the repo cloned to
+  `scratchpad/AVO` via `gh repo clone onestudio-exp/AVO`). Query with
+  `memory_recall(namespace="avo", query="…")`.
+
+---
+
 # The FlowOS brain — querying CaBrain about ventures & people
 
 CaBrain has ingested the FlowOS (OneStudio hub) knowledge into the `flowos`

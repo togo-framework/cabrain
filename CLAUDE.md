@@ -12,10 +12,17 @@ See .claude/rules/togo.md for detail and .claude/skills for slash commands.
 
 ## The FlowOS brain (cabrain MCP)
 
-The **cabrain** MCP server (in `.mcp.json`) exposes this project's memory organ. The
-**FlowOS / OneStudio hub** knowledge is loaded into the `flowos` namespace (~1,780
-memories: ventures, domain-expert agents, people, issues, posts, roadmaps, releases,
-goals, learnings, harvested research).
+The **cabrain** MCP server (in `.mcp.json`) exposes this project's memory organ. Two
+brains are loaded:
+- **`flowos`** (~1,780 memories) — the FlowOS / OneStudio hub: ventures, domain-expert
+  agents, people, issues, posts, roadmaps, releases, goals, learnings, harvested research.
+- **`avo`** (~2,490 memories) — the **AVO "Founder Readiness Lab"** repo markdown
+  (board pack, playbooks, kaizen engine, kickstart legal/finance, pitch/fundraising,
+  research, theses, drills). Use for AVO / founder-readiness / KSA-GCC founder-prep
+  questions.
+
+Pick the namespace matching the question (`flowos` for the studio, `avo` for founder
+readiness); recall both and merge only if genuinely ambiguous.
 
 **MEMORY-FIRST IS MANDATORY. Every turn: recall → answer/act → retain.** For ANY
 question or task touching FlowOS / OneStudio — a venture, portfolio, person, agent,
