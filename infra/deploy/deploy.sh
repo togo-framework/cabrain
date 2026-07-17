@@ -26,7 +26,12 @@ sudo -E docker run -d --name cabrain \
   -e DATABASE_URL="postgresql://cabrain:${CABRAIN_PW}@pg:5432/cabrain?search_path=cabrain_auth,public" \
   -e DB_DRIVER=pgx -e CACHE_DRIVER=redis -e REDIS_URL=redis://redis:6379 \
   -e BRAIN_BM25_TOKENIZER=cabrain_ml \
+  -e CABRAIN_REQUIRE_AUTH=1 \
   cabrain:latest
+# AUTH_SECRET + CABRAIN_SECRETS_KEY come from --env-file (/mnt/c/services/cabrain/.env);
+# they MUST be set there for login sessions + the secrets vault to survive restarts.
+# CABRAIN_REQUIRE_AUTH=1 makes every /api/brain/* endpoint require a login session
+# (browser) or an X-Cabrain-Token (MCP) — the public URL is no longer open.
 sleep 5
 sudo -E docker ps --format '{{.Names}} {{.Status}}' | grep -E "^cabrain "
 echo "=== [$(date -Is)] deploy done ==="
