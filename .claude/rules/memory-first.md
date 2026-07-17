@@ -57,4 +57,17 @@ The tools need the app on `:8080`. If `memory_recall` fails to connect, tell the
 to run `bash /home/coder/run-cabrain.sh` (and confirm the workspace is on
 `stack_stacknet`). See `docs/flowos-brain.md`.
 
-**Order of operations every turn: recall → answer/act → retain.**
+## R9 — Keep the `cabrain` brain current (every update)
+After committing a set of changes to this project, **refresh the `cabrain` dev brain**
+so the next session can recall the latest state and history:
+
+```bash
+CABRAIN_MEMORY_FILE=~/.claude/projects/-home-coder-caBrain/memory/cabrain-project.md \
+  python3 scripts/refresh-cabrain-brain.py
+```
+
+This re-ingests the repo docs + the full git build-log (+ the curated project memory
+if the env var is set); the §4.1 write-decision dedupes, so only new/changed knowledge
+is added. Treat it as part of "done": code committed → brain refreshed.
+
+**Order of operations every turn: recall → answer/act → retain (and refresh `cabrain` after commits).**
