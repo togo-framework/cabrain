@@ -58,7 +58,11 @@ func consoleAuth(k *togo.Kernel, h http.HandlerFunc) http.HandlerFunc {
 }
 
 func init() {
-	togo.RegisterProviderFunc(Name, togo.PriorityLate, func(k *togo.Kernel) error {
+	// PriorityLate+10 (100) so this plugin's routes mount AFTER the auth plugin
+	// (PriorityLate+5) has installed its global chi middleware via Router.Use() —
+	// chi forbids Use() once any route exists, so every route-registering plugin
+	// must run after auth. brain still stays "late" (after db/cache/realtime).
+	togo.RegisterProviderFunc(Name, togo.PriorityLate+10, func(k *togo.Kernel) error {
 		svc := brain.New(k)
 		// gate wraps a console admin/management endpoint with the human login gate.
 		gate := func(h http.HandlerFunc) http.HandlerFunc { return consoleAuth(k, h) }
