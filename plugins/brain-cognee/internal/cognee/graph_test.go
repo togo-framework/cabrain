@@ -49,3 +49,55 @@ func TestParseGraphInvalid(t *testing.T) {
 		t.Fatal("expected error on invalid JSON")
 	}
 }
+
+func TestMemoryEntityLinks(t *testing.T) {
+	const mem = "d9925e40-9e60-4755-9ecf-559e00744caa"
+	// Document node carries the mem-<uuid>.txt name → chunk → two entities (2 hops).
+	// A far entity (3 hops) must NOT link; an unrelated doc contributes nothing.
+	g := &GraphDTO{
+		Nodes: []GraphNode{
+			{ID: "doc", Label: "mem-" + mem + ".txt", Type: "TextDocument"},
+			{ID: "chunk", Label: "chunk-0", Type: "DocumentChunk"},
+			{ID: "e1", Label: "Redis", Type: "Entity"},
+			{ID: "e2", Label: "Postgres", Type: "Entity"},
+			{ID: "far", Label: "FarEntity", Type: "Entity"},
+			{ID: "doc2", Label: "other.txt", Type: "TextDocument"},
+		},
+		Edges: []GraphEdge{
+			{Source: "doc", Target: "chunk", Label: "has_chunk"},
+			{Source: "chunk", Target: "e1", Label: "mentions"},
+			{Source: "chunk", Target: "e2", Label: "mentions"},
+			{Source: "e2", Target: "far", Label: "related"}, // 3 hops from doc → excluded
+		},
+	}
+	links := g.MemoryEntityLinks()
+	got := map[string]bool{}
+	for _, l := range links {
+		if l.MemoryID != mem {
+			t.Fatalf("unexpected memory id %q", l.MemoryID)
+		}
+		got[l.EntityName] = true
+	}
+	if !got["Redis"] || !got["Postgres"] {
+		t.Fatalf("expected Redis+Postgres links, got %v", got)
+	}
+	if got["FarEntity"] {
+		t.Fatal("FarEntity is 3 hops away and must not link")
+	}
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links, got %d: %+v", len(links), links)
+	}
+}
+
+func TestNodeMemoryIDFromProperties(t *testing.T) {
+	// The uuid may ride in a property value rather than the label.
+	n := GraphNode{ID: "d", Label: "document", Properties: map[string]any{
+		"name": "mem-25a34e66-1292-4962-b880-cb00ef028ec1.txt",
+	}}
+	if got := nodeMemoryID(n); got != "25a34e66-1292-4962-b880-cb00ef028ec1" {
+		t.Fatalf("nodeMemoryID from properties = %q", got)
+	}
+	if got := nodeMemoryID(GraphNode{Label: "Postgres", Type: "Entity"}); got != "" {
+		t.Fatalf("entity node should have no memory id, got %q", got)
+	}
+}
