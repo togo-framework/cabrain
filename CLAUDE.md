@@ -21,8 +21,13 @@ brains are loaded:
   research, theses, drills). Use for AVO / founder-readiness / KSA-GCC founder-prep
   questions.
 
-Pick the namespace matching the question (`flowos` for the studio, `avo` for founder
-readiness); recall both and merge only if genuinely ambiguous.
+- **`cabrain`** — this project's own dev knowledge (repo docs + git history). Use when
+  developing/following up on CaBrain itself.
+
+Pick the namespace matching the question (`flowos` studio, `avo` founder readiness,
+`cabrain` this project's dev); recall both/all and merge only if genuinely ambiguous.
+Manage brains with the MCP tools `brain_list`, `brain_details`, `memory_edit`,
+`brain_delete`, and knowledge gaps with `memory_gaps` / `memory_resolve_gap`.
 
 **MEMORY-FIRST IS MANDATORY. Every turn: recall → answer/act → retain.** For ANY
 question or task touching FlowOS / OneStudio — a venture, portfolio, person, agent,

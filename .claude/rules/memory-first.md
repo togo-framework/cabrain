@@ -45,6 +45,9 @@ phrasing if the first is thin.
   repo (board, playbooks, kaizen engine, kickstart legal/finance, pitch/fundraising,
   research, theses, drills). Use for any question about AVO, founder readiness, the
   board pack, playbooks, or KSA/GCC founder prep.
+- `cabrain` — this project's own dev knowledge: the CaBrain repo docs (SPEC, PLAN,
+  DEPLOY, decisions, rules) + git commit history. Use when developing/following up
+  on CaBrain itself ("how does the Redis L1 work?", "why the partition-index BM25?").
 
 Pick the namespace that matches the question; never mix scopes in one query. If it's
 ambiguous which brain, recall both (two calls) and merge.
