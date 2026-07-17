@@ -17,15 +17,21 @@ The **cabrain** MCP server (in `.mcp.json`) exposes this project's memory organ.
 memories: ventures, domain-expert agents, people, issues, posts, roadmaps, releases,
 goals, learnings, harvested research).
 
-**When the user asks anything about FlowOS / OneStudio — a venture, a person, an
-agent, an issue, a decision, a learning — call the cabrain MCP `memory_recall` tool
-with `namespace: "flowos"` FIRST**, then answer from what it returns (cite the
-memories). Examples: "who is X?", "what is the Sentra venture?", "which agent does
-Saudi HR?", "what open OAuth issues exist?", "what have we learned about auth gates?".
+**MEMORY-FIRST IS MANDATORY. Every turn: recall → answer/act → retain.** For ANY
+question or task touching FlowOS / OneStudio — a venture, portfolio, person, agent,
+issue, task, post, decision, or learning — you **MUST** call the cabrain MCP
+`memory_recall` tool with `namespace: "flowos"` **before** answering, base the answer
+on what it returns (and cite it), and `memory_retain` anything new you produce. If
+recall returns nothing, say so — never invent facts.
 
-- Prefer concise/keyword queries (e.g. `"Sentra"`, `"PDPL compliance kit"`) — they
-  rank cleaner than long sentences.
-- To store a new fact, use `memory_retain` (namespace `flowos`). To fetch one by id,
-  `memory_get`; to retire one, `memory_forget`.
-- The brain needs the app running on `:8080` (`bash /home/coder/run-cabrain.sh` if it's
-  down) and the workspace attached to `stack_stacknet`. See `docs/flowos-brain.md`.
+Examples that must trigger a recall first: "who is X?", "what is the Sentra venture?",
+"which agent does Saudi HR?", "what open OAuth issues exist?", "what have we learned
+about auth gates?".
+
+- Prefer concise/keyword queries (e.g. `"Sentra"`, `"PDPL compliance kit"`).
+- `memory_retain` to store, `memory_get` to fetch by id, `memory_forget` to retire.
+- Needs the app on `:8080` (`bash /home/coder/run-cabrain.sh` if down) + the workspace
+  on `stack_stacknet`.
+
+**Full mandatory ruleset: `.claude/rules/memory-first.md` (R1–R8).** Also see
+`docs/flowos-brain.md`.
