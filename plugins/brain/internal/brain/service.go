@@ -12,10 +12,11 @@ import (
 type Service struct {
 	k     *togo.Kernel
 	Store *Store
+	hub   *hub // realtime SSE fan-out for multi-user live updates
 }
 
 func New(k *togo.Kernel) *Service {
-	return &Service{k: k, Store: newStore(k)}
+	return &Service{k: k, Store: newStore(k), hub: newHub()}
 }
 
 // Ping is a health endpoint (GET /api/brain/ping).

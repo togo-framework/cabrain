@@ -64,6 +64,10 @@ func (s *Service) Recall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
 		return
 	}
+	s.hub.publish("recall", map[string]any{"namespace": q.Namespace, "count": len(res)})
+	if len(res) == 0 {
+		s.hub.publish("gap", map[string]any{"namespace": q.Namespace, "query": q.Query})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": res})
 }
 
@@ -103,6 +107,7 @@ func (s *Service) Search(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
 		return
 	}
+	s.hub.publish("search", map[string]any{"count": len(res)})
 	writeJSON(w, http.StatusOK, map[string]any{"results": res})
 }
 
@@ -126,6 +131,7 @@ func (s *Service) Retain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
 		return
 	}
+	s.hub.publish("retain", map[string]any{"namespace": in.Namespace, "decision": res.Decision})
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -269,6 +275,7 @@ func (s *Service) ResolveGap(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.publish("gap", map[string]any{"resolved": in.ID, "status": in.Status})
 	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "status": in.Status})
 }
 
@@ -320,6 +327,7 @@ func (s *Service) DeleteBrain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.publish("brain", map[string]any{"deleted": in.Namespace})
 	writeJSON(w, http.StatusOK, map[string]any{"namespace": in.Namespace, "deleted": n})
 }
 
@@ -439,6 +447,7 @@ func (s *Service) GrantBrain(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.hub.publish("grant", map[string]any{"agentId": in.AgentID, "namespace": in.Namespace})
 	writeJSON(w, http.StatusOK, g)
 }
 

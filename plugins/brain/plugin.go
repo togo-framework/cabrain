@@ -20,6 +20,7 @@ func init() {
 		// isn't live). retain/recall return a structured "needs DB + brain-tei"
 		// error until Blocker B clears.
 		k.Router.Get("/api/brain/ping", svc.Ping)
+		k.Router.Get("/api/brain/events", svc.Events) // realtime SSE (multi-user live updates)
 		k.Router.Get("/api/brain/stats", svc.Stats)
 		k.Router.Get("/api/brain/activity", svc.Activity)
 		k.Router.Get("/api/brain/namespaces", svc.Namespaces)
