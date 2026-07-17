@@ -35,10 +35,11 @@ const protocolVersion = "2024-11-05"
 func main() {
 	base := env("CABRAIN_API_URL", "http://localhost:8080")
 	srv := &server{
-		base:  strings.TrimRight(base, "/"),
-		agent: os.Getenv("CABRAIN_AGENT_ID"),
-		token: os.Getenv("CABRAIN_TOKEN"), // ACL token → per-brain read/write
-		hc:    &http.Client{Timeout: 30 * time.Second},
+		base:      strings.TrimRight(base, "/"),
+		agent:     os.Getenv("CABRAIN_AGENT_ID"),
+		token:     os.Getenv("CABRAIN_TOKEN"),             // ACL token → per-brain read/write
+		defaultNS: os.Getenv("CABRAIN_DEFAULT_NAMESPACE"), // session bound to a brain
+		hc:        &http.Client{Timeout: 30 * time.Second},
 	}
 	srv.serve(os.Stdin, os.Stdout)
 }
@@ -72,11 +73,12 @@ type rpcError struct {
 }
 
 type server struct {
-	base  string
-	agent string
-	token string
-	hc    *http.Client
-	out   *json.Encoder
+	base      string
+	agent     string
+	token     string
+	defaultNS string
+	hc        *http.Client
+	out       *json.Encoder
 }
 
 func (s *server) serve(in io.Reader, out io.Writer) {
@@ -143,6 +145,12 @@ func (s *server) callTool(req *rpcReq) {
 	args := map[string]any{}
 	if len(p.Arguments) > 0 {
 		_ = json.Unmarshal(p.Arguments, &args)
+	}
+	// Session bound to a brain: default the namespace when the caller omits it.
+	if s.defaultNS != "" {
+		if v, ok := args["namespace"]; !ok || v == nil || v == "" {
+			args["namespace"] = s.defaultNS
+		}
 	}
 
 	var (

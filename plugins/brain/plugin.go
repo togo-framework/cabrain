@@ -47,6 +47,8 @@ func init() {
 		k.Router.Post("/api/brain/tokens/revoke", svc.RevokeToken)
 		k.Router.Post("/api/brain/grant", svc.GrantBrain)
 		k.Router.Post("/api/brain/grant/revoke", svc.RevokeGrant)
+		// Session launcher: mint a scoped token + Claude Code config for a brain.
+		k.Router.Post("/api/brain/session", svc.Session)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name)

@@ -1,12 +1,22 @@
 package brain
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"strconv"
 )
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "0000"
+	}
+	return hex.EncodeToString(b)
+}
 
 // HTTP surface for the console. Read endpoints are always safe (defensive
 // queries). Write/recall endpoints return a clear, structured error until the
@@ -467,6 +477,70 @@ func (s *Service) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": true})
+}
+
+// POST /api/brain/session { namespace, write?, label? } — mint a scoped token and
+// return a ready-to-use Claude Code session config bound to that brain (omnigent-
+// style). Caller must be able to read the brain (and write, if write requested).
+func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Namespace string `json:"namespace"`
+		Write     bool   `json:"write"`
+		Label     string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace required"))
+		return
+	}
+	if !s.canRead(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no access to brain "+in.Namespace))
+		return
+	}
+	if in.Write && !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
+	agent := "session-" + in.Namespace + "-" + randHex(4)
+	label := in.Label
+	if label == "" {
+		label = "session for " + in.Namespace
+	}
+	t, err := s.Store.CreateToken(r.Context(), agent, label, false)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := s.Store.Share(r.Context(), in.Namespace, agent, true, in.Write); err != nil {
+		writeErr(w, err)
+		return
+	}
+	pub := os.Getenv("CABRAIN_PUBLIC_URL")
+	if pub == "" {
+		pub = "http://localhost:8080"
+	}
+	mcp := map[string]any{"mcpServers": map[string]any{"cabrain": map[string]any{
+		"command": "brain-mcp",
+		"env": map[string]any{
+			"CABRAIN_API_URL":           pub,
+			"CABRAIN_TOKEN":             t.Token,
+			"CABRAIN_DEFAULT_NAMESPACE": in.Namespace,
+		},
+	}}}
+	s.hub.publish("session", map[string]any{"namespace": in.Namespace, "agentId": agent, "write": in.Write})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agentId":   agent,
+		"namespace": in.Namespace,
+		"write":     in.Write,
+		"token":     t.Token,
+		"mcpConfig": mcp,
+		"howto": "Install: go install ./cmd/brain-mcp. Drop mcpConfig into .mcp.json, then start Claude Code — " +
+			"it recalls/retains against brain '" + in.Namespace + "' by default, with " +
+			map[bool]string{true: "read+write", false: "read-only"}[in.Write] + " access.",
+	})
 }
 
 func apiErr(code, msg string) map[string]any {
