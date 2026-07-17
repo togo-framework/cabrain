@@ -6,6 +6,7 @@
 package brain
 
 import (
+	"context"
 	"net/http"
 	"os"
 
@@ -57,6 +58,36 @@ func consoleAuth(k *togo.Kernel, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// secure authenticates EVERY brain endpoint when CABRAIN_REQUIRE_AUTH is on:
+// the caller must present either a valid login session (browser — via the auth
+// plugin's cookie/JWT middleware) OR a valid X-Cabrain-Token (MCP/programmatic).
+// Anything else gets 401 from the auth middleware, so the public URL is no longer
+// open. Per-brain authorization (canRead/canWrite/adminOnly) still runs inside the
+// handlers. When enforcement is off, endpoints are served as-is (local/dev).
+func secure(k *togo.Kernel, svc interface {
+	ValidToken(ctx context.Context, tok string) bool
+}, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !authRequired() {
+			h(w, r)
+			return
+		}
+		if tok := r.Header.Get("X-Cabrain-Token"); tok != "" && svc.ValidToken(r.Context(), tok) {
+			h(w, r) // MCP: authenticated by token; handler checks its grants
+			return
+		}
+		if v, ok := k.Get("auth"); ok {
+			if g, ok := v.(consoleAuthGuard); ok {
+				g.Middleware(h).ServeHTTP(w, r) // browser: require a login session
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":"auth_unavailable","message":"CABRAIN_REQUIRE_AUTH is set but the auth plugin is not active"}}`))
+	}
+}
+
 func init() {
 	// PriorityLate+10 (100) so this plugin's routes mount AFTER the auth plugin
 	// (PriorityLate+5) has installed its global chi middleware via Router.Use() —
@@ -64,50 +95,46 @@ func init() {
 	// must run after auth. brain still stays "late" (after db/cache/realtime).
 	togo.RegisterProviderFunc(Name, togo.PriorityLate+10, func(k *togo.Kernel) error {
 		svc := brain.New(k)
-		// gate wraps a console admin/management endpoint with the human login gate.
-		gate := func(h http.HandlerFunc) http.HandlerFunc { return consoleAuth(k, h) }
+		// secured authenticates a request (valid login session OR valid token) when
+		// CABRAIN_REQUIRE_AUTH is on; per-brain authorization still runs in-handler.
+		secured := func(h http.HandlerFunc) http.HandlerFunc { return secure(k, svc, h) }
 
-		// Health + the console read-API (always safe; defensive when the schema
-		// isn't live). retain/recall return a structured "needs DB + brain-tei"
-		// error until Blocker B clears. Read + core memory ops stay open here —
-		// the MCP token ACL (X-Cabrain-Token) governs their per-brain access.
+		// Health stays fully open (liveness probe). EVERY other endpoint is secured:
+		// with enforcement on, the public URL demands a session or a token; with it
+		// off, they're served as-is for local/dev. In-handler canRead/canWrite/
+		// adminOnly (X-Cabrain-Token ACL) is unchanged.
 		k.Router.Get("/api/brain/ping", svc.Ping)
-		k.Router.Get("/api/brain/events", svc.Events) // realtime SSE (multi-user live updates)
-		k.Router.Get("/api/brain/stats", svc.Stats)
-		k.Router.Get("/api/brain/activity", svc.Activity)
-		k.Router.Get("/api/brain/namespaces", svc.Namespaces)
-		k.Router.Get("/api/brain/graph", svc.Graph)
-		k.Router.Post("/api/brain/recall", svc.Recall)
-		k.Router.Post("/api/brain/search", svc.Search) // cross-brain search engine
-		k.Router.Post("/api/brain/retain", svc.Retain)
-		// Point-lookup + lifecycle (SPEC §5.1) — pure SQL, work before brain-tei.
-		k.Router.Get("/api/brain/memory", svc.Get)
-		k.Router.Post("/api/brain/forget", svc.Forget)
-		k.Router.Post("/api/brain/share", svc.Share)
-		// Knowledge gaps (missed questions → actionable index).
-		k.Router.Get("/api/brain/gaps", svc.Gaps)
-		k.Router.Post("/api/brain/gaps/resolve", gate(svc.ResolveGap))
-		// Brain administration: details, export/import (portability), delete, edit.
-		k.Router.Get("/api/brain/brain", svc.BrainDetail)
-		k.Router.Get("/api/brain/export", svc.Export)
-		k.Router.Post("/api/brain/import", gate(svc.Import))
-		k.Router.Post("/api/brain/brain/delete", gate(svc.DeleteBrain))
-		k.Router.Post("/api/brain/memory/edit", gate(svc.EditMemory))
-		// ACL: access tokens + per-brain grants (admin-only management).
-		k.Router.Get("/api/brain/tokens", gate(svc.ListTokens))
-		k.Router.Post("/api/brain/tokens", gate(svc.CreateToken))
-		k.Router.Post("/api/brain/tokens/revoke", gate(svc.RevokeToken))
-		k.Router.Post("/api/brain/grant", gate(svc.GrantBrain))
-		k.Router.Post("/api/brain/grant/revoke", gate(svc.RevokeGrant))
-		// Session launcher: mint a scoped token + Claude Code config for a brain.
-		k.Router.Post("/api/brain/session", gate(svc.Session))
-		// Live agent: chat with a selected brain (RAG grounded in its memories).
-		k.Router.Post("/api/brain/chat", svc.Chat)
-		// Per-brain secrets vault (encrypted; reveal/write are console-gated + ACL).
-		k.Router.Get("/api/brain/secrets", svc.SecretsList)
-		k.Router.Post("/api/brain/secrets", gate(svc.SecretPut))
-		k.Router.Post("/api/brain/secrets/reveal", gate(svc.SecretReveal))
-		k.Router.Post("/api/brain/secrets/delete", gate(svc.SecretDelete))
+		k.Router.Get("/api/brain/events", secured(svc.Events)) // realtime SSE (cookie session)
+		k.Router.Get("/api/brain/stats", secured(svc.Stats))
+		k.Router.Get("/api/brain/activity", secured(svc.Activity))
+		k.Router.Get("/api/brain/namespaces", secured(svc.Namespaces))
+		k.Router.Get("/api/brain/graph", secured(svc.Graph))
+		k.Router.Post("/api/brain/recall", secured(svc.Recall))
+		k.Router.Post("/api/brain/search", secured(svc.Search))
+		k.Router.Post("/api/brain/retain", secured(svc.Retain))
+		k.Router.Get("/api/brain/memory", secured(svc.Get))
+		k.Router.Post("/api/brain/forget", secured(svc.Forget))
+		k.Router.Post("/api/brain/share", secured(svc.Share))
+		k.Router.Get("/api/brain/gaps", secured(svc.Gaps))
+		k.Router.Post("/api/brain/gaps/resolve", secured(svc.ResolveGap))
+		k.Router.Get("/api/brain/brain", secured(svc.BrainDetail))
+		k.Router.Get("/api/brain/export", secured(svc.Export))
+		k.Router.Post("/api/brain/import", secured(svc.Import))
+		k.Router.Post("/api/brain/brain/delete", secured(svc.DeleteBrain))
+		k.Router.Post("/api/brain/memory/edit", secured(svc.EditMemory))
+		k.Router.Get("/api/brain/tokens", secured(svc.ListTokens))
+		k.Router.Post("/api/brain/tokens", secured(svc.CreateToken))
+		k.Router.Post("/api/brain/tokens/revoke", secured(svc.RevokeToken))
+		k.Router.Post("/api/brain/grant", secured(svc.GrantBrain))
+		k.Router.Post("/api/brain/grant/revoke", secured(svc.RevokeGrant))
+		k.Router.Post("/api/brain/session", secured(svc.Session))
+		// Live agent: chat with a selected brain.
+		k.Router.Post("/api/brain/chat", secured(svc.Chat))
+		// Per-brain secrets vault (reveal/write also do ACL in-handler).
+		k.Router.Get("/api/brain/secrets", secured(svc.SecretsList))
+		k.Router.Post("/api/brain/secrets", secured(svc.SecretPut))
+		k.Router.Post("/api/brain/secrets/reveal", secured(svc.SecretReveal))
+		k.Router.Post("/api/brain/secrets/delete", secured(svc.SecretDelete))
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name, "consoleAuth", authRequired())
