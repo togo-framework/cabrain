@@ -6,7 +6,7 @@ import {
   ArrowRight, Boxes, Waypoints, Lock,
 } from "lucide-react";
 import { brainApi, type BrainDetail, type NamespaceInfo } from "../lib/brain";
-import { SynapseField } from "../components/neural";
+import { SynapseField, NeuralGlyph } from "../components/neural";
 import { LaunchSessionModal } from "../components/launch-session-modal";
 
 // Stable hue per type name — matches the mindmap palette family.
@@ -77,6 +77,25 @@ function DeleteBrainModal({ namespace, onClose }: { namespace: string; onClose: 
   );
 }
 
+/** A brain's visual identity (Shape-of-AI: Avatar + Color) — a neural glyph in the
+ * brain's own stable hue with a soft synaptic glow. Reads as a *brain*, not a DB. */
+export function BrainAvatar({ namespace, size = 8 }: { namespace: string; size?: number }) {
+  const c = hueFor(namespace);
+  return (
+    <span
+      className="relative flex shrink-0 items-center justify-center rounded-full"
+      style={{
+        height: `${size * 0.25}rem`, width: `${size * 0.25}rem`,
+        background: `radial-gradient(circle at 30% 30%, ${c}33, ${c}14)`,
+        boxShadow: `0 0 14px -4px ${c}`, color: c, border: `1px solid ${c}55`,
+      }}
+      title={namespace}
+    >
+      <NeuralGlyph className="h-1/2 w-1/2" />
+    </span>
+  );
+}
+
 function TypeBar({ label, count, max }: { label: string; count: number; max: number }) {
   const pct = max > 0 ? Math.max(4, (count / max) * 100) : 0;
   return (
@@ -108,7 +127,7 @@ function BrainCard({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () =
   return (
     <div className="group flex flex-col rounded-xl border border-border bg-card p-4 transition hover:border-primary/50 hover:shadow-sm">
       <Link to="/b/$namespace" params={{ namespace: b.namespace }} className="flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary"><Database className="h-4 w-4" /></span>
+        <BrainAvatar namespace={b.namespace} />
         <span className="font-medium text-foreground group-hover:text-primary">{b.namespace}</span>
         {d && d.openGaps > 0 && (
           <span className="ms-auto inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-500">
@@ -218,7 +237,7 @@ export function BrainsHub() {
             Your organization's shared memory — one store, many brains. Open a brain to explore its graph, sessions, gaps and secrets.
           </p>
           <div className="flex flex-wrap gap-2">
-            <HeroStat icon={Database} label="brains" value={stats.data?.brains ?? brains.length} loading={loading} />
+            <HeroStat icon={NeuralGlyph} label="brains" value={stats.data?.brains ?? brains.length} loading={loading} />
             <HeroStat icon={Boxes} label="memories" value={stats.data?.memories ?? 0} loading={loading} />
             <HeroStat icon={Waypoints} label="graph nodes" value={stats.data?.entities ?? 0} loading={loading} />
             <HeroStat icon={HelpCircle} label="open gaps" value={stats.data?.openGaps ?? 0} loading={loading} />
