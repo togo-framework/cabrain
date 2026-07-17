@@ -26,6 +26,17 @@ func serveSPA(router interface {
 			fs.ServeHTTP(w, r)
 			return
 		}
+		// A request for a static asset (any path with a non-.html extension —
+		// /assets/index-STALE.js, a font, a source map) that doesn't exist must
+		// return 404, NOT the HTML shell. Serving index.html here makes the browser
+		// try to parse HTML as a JS module: "Expected a JavaScript-or-Wasm module
+		// script but the server responded with a MIME type of text/html". Only real
+		// client-routes (extensionless / .html) fall back to index.html so deep
+		// links still work.
+		if ext := filepath.Ext(r.URL.Path); ext != "" && ext != ".html" {
+			http.NotFound(w, r)
+			return
+		}
 		http.ServeFile(w, r, index)
 	}))
 }
