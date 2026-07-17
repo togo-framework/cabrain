@@ -166,10 +166,18 @@ func (s *Service) identify(r *http.Request) caller {
 		return caller{valid: false} // bad/revoked token → deny
 	}
 	agent := r.Header.Get("X-Agent-Id")
-	if agent == "" && os.Getenv("CABRAIN_REQUIRE_TOKEN") != "1" {
-		return caller{admin: true, valid: true} // trusted local console
+	// No token presented. The X-Cabrain-Token ACL is the enforcement mechanism; a
+	// bare X-Agent-Id is only an identity label (activity attribution), NOT a
+	// credential. So unless token enforcement is explicitly ON, a tokenless caller
+	// is the trusted local console/MCP — EVEN when it sends an agent id. (Previously
+	// a tokenless call that set X-Agent-Id fell into grant checks and got denied on
+	// every brain — the local .mcp sets CABRAIN_AGENT_ID=claude-code, so it locked
+	// itself out.)
+	if os.Getenv("CABRAIN_REQUIRE_TOKEN") != "1" {
+		return caller{agent: agent, admin: true, valid: true}
 	}
-	return caller{agent: agent, valid: agent != "" || os.Getenv("CABRAIN_REQUIRE_TOKEN") != "1"}
+	// Enforcement ON + no token → must be a known, granted agent (never admin).
+	return caller{agent: agent, valid: agent != ""}
 }
 
 func (s *Service) canRead(r *http.Request, ns string) bool {
