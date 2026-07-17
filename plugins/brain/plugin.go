@@ -101,6 +101,8 @@ func init() {
 		k.Router.Post("/api/brain/grant/revoke", gate(svc.RevokeGrant))
 		// Session launcher: mint a scoped token + Claude Code config for a brain.
 		k.Router.Post("/api/brain/session", gate(svc.Session))
+		// Live agent: chat with a selected brain (RAG grounded in its memories).
+		k.Router.Post("/api/brain/chat", svc.Chat)
 		// Per-brain secrets vault (encrypted; reveal/write are console-gated + ACL).
 		k.Router.Get("/api/brain/secrets", svc.SecretsList)
 		k.Router.Post("/api/brain/secrets", gate(svc.SecretPut))

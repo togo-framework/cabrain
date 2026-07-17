@@ -165,6 +165,15 @@ var toolDefs = []map[string]any{
 		}),
 	},
 	{
+		"name":        "brain_chat",
+		"description": "Live agent: ask a selected brain a question. It recalls the brain's relevant memories and answers grounded ONLY in them, returning the answer + the memories it cited (footprint). Says the brain has no memory of it rather than guessing.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"message":   prop{"type": "string"},
+			"topK":      prop{"type": "integer", "description": "memories to ground on (default 8)"},
+		}, "namespace", "message"),
+	},
+	{
 		"name":        "secret_list",
 		"description": "Secrets vault: list secret names + masked hints for a brain (NO values). Needs read on the brain.",
 		"inputSchema": obj(prop{

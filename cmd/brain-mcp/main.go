@@ -237,6 +237,9 @@ func (s *server) callTool(req *rpcReq) {
 			qv.Set("includeRevoked", "1")
 		}
 		body, code, err = s.get("/api/brain/tokens", qv)
+	case "brain_chat":
+		body, code, err = s.post("/api/brain/chat", map[string]any{
+			"namespace": args["namespace"], "message": args["message"], "topK": args["topK"]})
 	case "secret_list":
 		body, code, err = s.get("/api/brain/secrets", url.Values{"namespace": {str(args["namespace"])}})
 	case "secret_store":

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func randHex(n int) string {
@@ -363,6 +364,32 @@ func (s *Service) EditMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "updated": true})
+}
+
+// POST /api/brain/chat  { namespace, message, history?, topK? }
+// Live agent: chat with a selected brain (RAG grounded in its memories, with
+// citations + a footprint). Read access on the brain is required.
+func (s *Service) Chat(w http.ResponseWriter, r *http.Request) {
+	var in ChatQuery
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" || strings.TrimSpace(in.Message) == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace and message required"))
+		return
+	}
+	if !s.canRead(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no access to brain "+in.Namespace))
+		return
+	}
+	ans, err := s.Store.Chat(r.Context(), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("chat", map[string]any{"namespace": in.Namespace, "recalled": ans.Footprint.Recalled})
+	writeJSON(w, http.StatusOK, ans)
 }
 
 // --- Per-brain secrets vault -------------------------------------------------
