@@ -28,8 +28,11 @@ never baked into the image. The columns below are what the **app binary actually
 | `BRAIN_BM25_TOKENIZER` | `cabrain_bm25_tok` (default) → set `cabrain_ml` | Optional. Switch to `cabrain_ml` **after** a superuser runs `infra/grant-bm25.sql` §3 (llmlingua2 multilingual tokenizer). Until then leave unset/default. |
 | `COGNEE_API_URL` | `http://cognee:8000` | Optional. Unset ⇒ cognify engine disabled (non-fatal). |
 | `COGNEE_ADMIN_EMAIL` / `COGNEE_API_TOKEN` | … | Optional. Login creds for the cognify engine (confirm the auth scheme on-stack; workspace probe got 401). |
-| `CACHE_DRIVER` / `REDIS_URL` / `BRAIN_RECALL_CACHE_TTL` | `memory` (default) / — / `30` | Optional L1 recall cache. `memory` (in-process) needs nothing; `redis` needs the cache-redis plugin + `REDIS_URL` (see the Redis section). Redis is **not** on `stack_stacknet` today. |
+| `CACHE_DRIVER` / `REDIS_URL` / `BRAIN_RECALL_CACHE_TTL` | `redis` / `redis://redis:6379` / `30` | L1 recall cache. Redis **is** on `stack_stacknet` now (`redis:6379`, verified `PONG`) and is the live default in `run-cabrain.sh`. `memory` (in-process) also works with no deps. |
 | `CABRAIN_AGENT_ID` | `claude-code` | Optional. Session identity for grant checks (MCP/API); empty = trusted context. |
+| `AUTH_SECRET` | 64-hex (`openssl rand -hex 32`) | **Required for stable auth** — the togo auth plugin signs session JWTs with it. Unset ⇒ an ephemeral secret is generated and sessions die on restart. Never commit. |
+| `CABRAIN_SECRETS_KEY` | 64-hex (`openssl rand -hex 32`) | Secrets vault AES-256 key. Stable across restarts so vaulted secrets stay decryptable. Unset ⇒ derived from `AUTH_SECRET`; if that's also unset the vault fails closed (never plaintext). Never commit. |
+| `CABRAIN_REQUIRE_AUTH` | unset (`1`/`true` to enforce) | Off ⇒ console open (trusted-admin). On ⇒ the login gate guards admin/management endpoints; requires `AUTH_SECRET` + a registered/dev admin. |
 | `COLD_STORE_*` | `http://minio:9000`, bucket `cabrain-cold` | Phase 2 cold-tier (MinIO). Not yet read by the binary; safe to leave in the file. |
 | `ADDR` / `WEB_DIST` | `:8080` / `/app/web/dist` | **Baked into the image** — do not override. |
 
@@ -53,16 +56,42 @@ set -a; . /mnt/c/services/cabrain/.env; set +a
 docker run -d --name cabrain \
   --network stack_stacknet \
   --env-file /mnt/c/services/cabrain/.env \
-  -e DATABASE_URL="$CABRAIN_DATABASE_URL" \
+  -e DATABASE_URL="${CABRAIN_DATABASE_URL}?search_path=cabrain_auth,public" \
   -e DB_DRIVER=pgx \
+  -e CACHE_DRIVER=redis -e REDIS_URL=redis://redis:6379 \
   cabrain:latest
 ```
 
-The container joins `stack_stacknet`, so `pg`, `tei-embed`, `tei-rerank`, `cognee`, `minio`
-resolve by name. `-e DATABASE_URL=…` is the one required remap (the env file only defines
+The container joins `stack_stacknet`, so `pg`, `tei-embed`, `tei-rerank`, `cognee`, `minio`,
+`redis` resolve by name. `-e DATABASE_URL=…` is the one required remap (the env file only defines
 `CABRAIN_DATABASE_URL`); `TEI_*`/`COGNEE_*` come straight from the file. To flip on the
 multilingual BM25 tokenizer, add `-e BRAIN_BM25_TOKENIZER=cabrain_ml` **after** the superuser
 step in `infra/grant-bm25.sql`.
+
+### 2a. Auth + secrets schema (one-time, per DB)
+
+The togo **auth** plugin and the **secrets vault** store their tables in a dedicated
+`cabrain_auth` schema so they never collide with Cognee's pre-existing `public.users`
+table in the shared `cabrain` DB. The `?search_path=cabrain_auth,public` above makes the
+app resolve `users`/`auth_sessions`/`secrets` there while brain tables (`memories`, …)
+fall back to `public`. Create the schema once as the `cabrain` role (additive — does NOT
+touch Cognee data):
+
+```sql
+CREATE SCHEMA IF NOT EXISTS cabrain_auth;
+CREATE TABLE IF NOT EXISTS cabrain_auth.users (
+  id text PRIMARY KEY, email text UNIQUE NOT NULL, password_hash text NOT NULL,
+  roles text NOT NULL DEFAULT '', permissions text NOT NULL DEFAULT '', created_at text NOT NULL);
+CREATE TABLE IF NOT EXISTS cabrain_auth.secrets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), namespace text NOT NULL, name text NOT NULL,
+  value_enc bytea NOT NULL, hint text, kind text, source_ref text, created_by text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (namespace, name));
+CREATE INDEX IF NOT EXISTS secrets_ns ON cabrain_auth.secrets (namespace, name);
+```
+(auth's other tables — `auth_sessions`, `personal_access_tokens`, `otp_codes`, … — are
+auto-created in `cabrain_auth` on first boot since they don't exist in `public`.) Set
+`AUTH_SECRET` and `CABRAIN_SECRETS_KEY` (§1) so JWTs + vaulted secrets survive restarts.
 
 ## 3. Public entry (host/admin action — do not automate)
 
