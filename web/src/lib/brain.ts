@@ -10,6 +10,7 @@ export type Stats = {
   agents: number;
   sessions24h: number;
   recalls24h: number;
+  openGaps: number;
 };
 
 export type ActivityItem = {
@@ -24,9 +25,16 @@ export type ActivityItem = {
 
 export type NamespaceInfo = { namespace: string; memories: number; lastAt: string };
 
-export type GraphNode = { id: string; name: string };
+// Derived hierarchy graph: root -> type nodes -> entity nodes.
+// `group` is "root" | "type" | "<typename>" (used to color nodes).
+export type GraphNode = { id: string; name: string; group?: string };
 export type GraphEdge = { source: string; target: string };
-export type GraphData = { ready: boolean; nodes: GraphNode[]; edges: GraphEdge[] };
+export type GraphData = {
+  ready: boolean;
+  derived?: boolean;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
 
 export type Recalled = {
   id: string;
@@ -39,6 +47,30 @@ export type Recalled = {
   importance: number;
   validAt: string;
   viaEntity?: string;
+};
+
+export type Gap = {
+  id: number;
+  namespace: string;
+  query: string;
+  hits: number;
+  status: "open" | "indexed" | "dismissed" | string;
+  resolution?: string;
+  firstSeen: string;
+  lastSeen: string;
+};
+
+export type GapStatus = "indexed" | "dismissed" | "open";
+
+export type BrainDetail = {
+  namespace: string;
+  memories: number;
+  types: Record<string, number>;
+  sources: Record<string, number>;
+  openGaps: number;
+  recalls: number;
+  firstAt: string;
+  lastAt: string;
 };
 
 export type ApiError = { error: { code: string; message: string } };
@@ -57,15 +89,47 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+const qs = (params: Record<string, string | number | undefined>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") p.set(k, String(v));
+  }
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+
 export const brainApi = {
   ping: () => getJSON<{ plugin: string; status: string }>("/api/brain/ping"),
   stats: () => getJSON<Stats>("/api/brain/stats"),
   activity: (limit = 50) => getJSON<{ items: ActivityItem[] }>(`/api/brain/activity?limit=${limit}`),
   namespaces: () => getJSON<{ brains: NamespaceInfo[] }>("/api/brain/namespaces"),
   graph: (namespace = "", limit = 200) =>
-    getJSON<GraphData>(`/api/brain/graph?namespace=${encodeURIComponent(namespace)}&limit=${limit}`),
+    getJSON<GraphData>(`/api/brain/graph${qs({ namespace, limit })}`),
   recall: (body: { namespace: string; query: string; limit?: number }) =>
     postJSON<{ results?: Recalled[] } & Partial<ApiError>>("/api/brain/recall", body),
   retain: (body: { namespace: string; content: string; sourceKind?: string; sourceRef?: string }) =>
     postJSON<Record<string, unknown> & Partial<ApiError>>("/api/brain/retain", body),
+
+  // --- Knowledge gaps ---
+  // Default (no status) returns open+indexed, not dismissed.
+  gaps: (opts: { namespace?: string; status?: string; limit?: number } = {}) =>
+    getJSON<{ gaps: Gap[] }>(`/api/brain/gaps${qs(opts)}`),
+  resolveGap: (body: { id: number; status: GapStatus; resolution?: string }) =>
+    postJSON<{ id: number; status: string } & Partial<ApiError>>("/api/brain/gaps/resolve", body),
+
+  // --- Brain details + admin ---
+  brainDetail: (namespace: string) =>
+    getJSON<BrainDetail & Partial<ApiError>>(`/api/brain/brain${qs({ namespace })}`),
+  deleteBrain: (body: { namespace: string; confirm: string }) =>
+    postJSON<{ namespace: string; deleted: number } & Partial<ApiError>>("/api/brain/brain/delete", body),
+  editMemory: (body: {
+    namespace: string;
+    id: string;
+    content?: string;
+    importance?: number;
+    metadata?: Record<string, unknown>;
+  }) => postJSON<{ id: string; updated: boolean } & Partial<ApiError>>("/api/brain/memory/edit", body),
+
+  // Streamed NDJSON download (Content-Disposition attachment) — use as a plain <a href>.
+  exportUrl: (namespace: string) => `${API}/api/brain/export${qs({ namespace })}`,
 };
