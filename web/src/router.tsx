@@ -9,6 +9,7 @@ import { BrainsHub } from "./routes/brain-brains";
 import { BrainOverview } from "./routes/brain-overview";
 import { BrainChat } from "./routes/brain-chat";
 import { BrainSearch } from "./routes/brain-search";
+import { BrainSources } from "./routes/brain-sources";
 import { BrainSessions } from "./routes/brain-sessions";
 import { BrainSecrets } from "./routes/brain-secrets";
 import { BrainGaps } from "./routes/brain-gaps";
@@ -72,6 +73,7 @@ const workspaceLayoutRoute = createRoute({ getParentRoute: () => rootRoute, path
 const wsOverviewRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/", component: () => <BrainOverview namespace={useNamespace()} /> });
 const wsChatRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/chat", component: BrainChat });
 const wsSearchRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/search", component: () => <BrainSearch namespace={useNamespace()} /> });
+const wsSourcesRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/sources", component: () => <BrainSources namespace={useNamespace()} /> });
 const wsSessionsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/sessions", component: () => <BrainSessions namespace={useNamespace()} /> });
 const wsSecretsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/secrets", component: () => <BrainSecrets namespace={useNamespace()} /> });
 const wsGapsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/gaps", component: () => <BrainGaps namespace={useNamespace()} /> });
@@ -93,7 +95,7 @@ const routeTree = rootRoute.addChildren([
   hubLayoutRoute.addChildren([hubIndexRoute]),
   ...redirects,
   workspaceLayoutRoute.addChildren([
-    wsOverviewRoute, wsChatRoute, wsSearchRoute, wsSessionsRoute, wsSecretsRoute,
+    wsOverviewRoute, wsChatRoute, wsSearchRoute, wsSourcesRoute, wsSessionsRoute, wsSecretsRoute,
     wsGapsRoute, wsPermissionsRoute, wsActivityRoute,
   ]),
   adminLayoutRoute.addChildren([

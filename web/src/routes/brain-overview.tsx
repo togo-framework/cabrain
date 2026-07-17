@@ -1,11 +1,14 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Boxes, Waypoints, Share2, Search as SearchIcon, HelpCircle, Lock, Network, ArrowRight,
+  MessagesSquare, Sparkles,
 } from "lucide-react";
 import { brainApi, type ActivityItem } from "../lib/brain";
 import { BrainGraphView } from "../components/brain-graph-view";
+import { SynapseField, NeuralCellMark } from "../components/neural";
+import { hueForBrain } from "../lib/brain-colors";
 
 /** Compact stat tile for a single brain. */
 function Tile({ label, value, loading, icon: Icon, tone, to, namespace }: {
@@ -34,6 +37,8 @@ function Tile({ label, value, loading, icon: Icon, tone, to, namespace }: {
  * graph explorer for THIS brain is the centerpiece, framed by the brain's live
  * stat tiles and a compact recent-activity strip. */
 export function BrainOverview({ namespace }: { namespace: string }) {
+  const nav = useNavigate();
+  const accent = hueForBrain(namespace || "brain");
   const detail = useQuery({
     queryKey: ["brain", "detail", namespace],
     queryFn: () => brainApi.brainDetail(namespace),
@@ -61,6 +66,12 @@ export function BrainOverview({ namespace }: { namespace: string }) {
     () => (activity.data?.items ?? []).filter((i) => i.namespace === namespace).slice(0, 8),
     [activity.data, namespace],
   );
+  // Suggested questions from the brain's top named entities (Shape-of-AI:
+  // Suggestions / Initial CTA) — so the workspace opens with somewhere to go.
+  const suggestions = useMemo(() => {
+    const named = nodes.filter((n) => !["root", "type"].includes(n.group ?? "")).map((n) => n.name).filter(Boolean);
+    return Array.from(new Set(named)).slice(0, 4);
+  }, [nodes]);
   const loading = detail.isLoading;
 
   return (
@@ -73,6 +84,42 @@ export function BrainOverview({ namespace }: { namespace: string }) {
         <Tile label="Recalls" value={d?.recalls ?? 0} loading={loading} icon={SearchIcon} namespace={namespace} />
         <Tile label="Open gaps" value={d?.openGaps ?? 0} loading={loading} icon={HelpCircle} tone="warn" to="/b/$namespace/gaps" namespace={namespace} />
         <Tile label="Secrets" value={secretCount} loading={secrets.isLoading} icon={Lock} to="/b/$namespace/secrets" namespace={namespace} />
+      </div>
+
+      {/* Initial CTA — invite the operator to talk to the brain, seeded with its
+          own top entities as suggested questions (Shape-of-AI: Suggestions). */}
+      <div
+        className="relative overflow-hidden rounded-2xl border p-5"
+        style={{ borderColor: `${accent}33`, background: `radial-gradient(120% 100% at 0% 0%, ${accent}18, transparent 55%), color-mix(in srgb, var(--card) 85%, transparent)` }}
+      >
+        <SynapseField className="opacity-30" />
+        <div className="relative flex flex-wrap items-center gap-4">
+          <NeuralCellMark color={accent} size={44} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-foreground">Ask the <span style={{ color: accent }}>{namespace}</span> brain</div>
+            <div className="text-xs text-muted-foreground">A live agent grounded only in this brain's memories — every answer cites its sources.</div>
+            {suggestions.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => nav({ to: "/b/$namespace/chat", params: { namespace } })}
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-card/70 px-2.5 py-1 text-xs text-foreground transition hover:border-primary/50 hover:text-primary"
+                  >
+                    <Sparkles className="h-3 w-3" style={{ color: accent }} /> Tell me about {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <Link
+            to="/b/$namespace/chat" params={{ namespace }}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-white transition hover:brightness-110"
+            style={{ background: `linear-gradient(135deg, ${accent}, ${accent}bb)`, boxShadow: `0 6px 20px -8px ${accent}` }}
+          >
+            <MessagesSquare className="h-4 w-4" /> Chat
+          </Link>
+        </div>
       </div>
 
       {/* The graph — centerpiece */}

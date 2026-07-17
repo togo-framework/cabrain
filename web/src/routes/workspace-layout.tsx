@@ -2,7 +2,7 @@ import { Outlet, useNavigate, useParams, useRouterState, Link } from "@tanstack/
 import { useQuery } from "@tanstack/react-query";
 import {
   Network, Search, Rocket, Lock, HelpCircle, KeyRound, Activity,
-  ChevronRight, ChevronsUpDown, Database, MessagesSquare,
+  ChevronRight, ChevronsUpDown, MessagesSquare, Plug,
 } from "lucide-react";
 import {
   SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
@@ -10,16 +10,19 @@ import {
   SidebarInset, SidebarTrigger, ThemePicker,
 } from "@togo-framework/ui";
 import { LiveIndicator } from "../lib/realtime";
-import { NeuralGlyph, SynapseField } from "../components/neural";
+import { NeuralGlyph, SynapseField, NeuralBackdrop, NeuralCellMark } from "../components/neural";
 import { UserMenu } from "../components/chrome";
 import { brainApi } from "../lib/brain";
+import { hueForBrain } from "../lib/brain-colors";
 
 // The brain workspace is a scoped surface: every section below is bound to the
-// $namespace in the URL. Overview (the graph) is the flagship index.
+// $namespace in the URL. Overview (the graph) is the flagship index. Sources
+// (data-source connectors) feed knowledge into the brain.
 const SECTIONS = [
   { seg: "", to: "/b/$namespace", label: "Overview", icon: Network },
   { seg: "chat", to: "/b/$namespace/chat", label: "Chat", icon: MessagesSquare },
   { seg: "search", to: "/b/$namespace/search", label: "Search", icon: Search },
+  { seg: "sources", to: "/b/$namespace/sources", label: "Sources", icon: Plug },
   { seg: "sessions", to: "/b/$namespace/sessions", label: "Sessions", icon: Rocket },
   { seg: "secrets", to: "/b/$namespace/secrets", label: "Secrets", icon: Lock },
   { seg: "gaps", to: "/b/$namespace/gaps", label: "Gaps", icon: HelpCircle },
@@ -35,6 +38,8 @@ export function BrainWorkspaceLayout() {
   const base = `/b/${namespace}`;
   const rest = pathname.startsWith(base) ? pathname.slice(base.length).replace(/^\//, "") : "";
   const current = SECTIONS.find((s) => s.seg === rest) ?? SECTIONS[0];
+  // The brain's identity colour, threaded through the whole workspace chrome.
+  const accent = hueForBrain(namespace || "brain");
 
   const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces });
   const brains = namespaces.data?.brains ?? [];
@@ -54,7 +59,13 @@ export function BrainWorkspaceLayout() {
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel className="truncate">Brain · {namespace}</SidebarGroupLabel>
+            {/* Brain identity — avatar + colour + name (Shape-of-AI: Identifiers) */}
+            <SidebarGroupLabel className="gap-2 truncate">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: accent, boxShadow: `0 0 8px ${accent}` }} />
+                <span className="truncate">Brain · {namespace}</span>
+              </span>
+            </SidebarGroupLabel>
             <SidebarMenu>
               {SECTIONS.map((s) => (
                 <SidebarMenuItem key={s.label}>
@@ -74,21 +85,26 @@ export function BrainWorkspaceLayout() {
       </Sidebar>
 
       <SidebarInset>
-        <header className="relative flex h-14 items-center justify-between gap-2 overflow-hidden border-b border-border px-4">
+        {/* Ambient neural mesh behind the whole workspace — one living organism. */}
+        <NeuralBackdrop className="opacity-60" />
+        <header className="relative z-10 flex h-14 items-center justify-between gap-2 overflow-hidden border-b border-border px-4">
           <SynapseField className="opacity-[0.15]" />
+          {/* thin accent line in the brain's own hue */}
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }} />
           <div className="relative flex min-w-0 items-center gap-2">
             <SidebarTrigger />
             {/* Breadcrumb */}
             <nav className="flex min-w-0 items-center gap-1.5 text-sm">
               <Link to="/" className="text-muted-foreground hover:text-foreground">Brains</Link>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              {/* Brain switcher */}
+              {/* Brain switcher — carries the brain's neural avatar + colour */}
               <div className="relative inline-flex items-center">
-                <Database className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-primary" />
+                <span className="pointer-events-none absolute left-1.5 flex items-center"><NeuralCellMark color={accent} size={20} firing={false} /></span>
                 <select
                   value={namespace}
                   onChange={(e) => nav({ to: current.to, params: { namespace: e.target.value } })}
-                  className="max-w-[180px] appearance-none truncate rounded-lg border border-border bg-background py-1.5 pl-7 pr-7 text-sm font-medium text-foreground outline-none focus:border-primary"
+                  className="max-w-[180px] appearance-none truncate rounded-lg border bg-background py-1.5 pl-8 pr-7 text-sm font-medium text-foreground outline-none"
+                  style={{ borderColor: `${accent}55` }}
                   title="Switch brain"
                 >
                   {brains.length === 0 && <option value={namespace}>{namespace}</option>}
@@ -108,7 +124,7 @@ export function BrainWorkspaceLayout() {
             <UserMenu />
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-auto"><Outlet /></main>
+        <main className="relative z-10 min-w-0 flex-1 overflow-auto"><Outlet /></main>
       </SidebarInset>
     </SidebarProvider>
   );

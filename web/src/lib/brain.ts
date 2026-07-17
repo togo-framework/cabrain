@@ -125,6 +125,29 @@ export type BrainDetail = {
   lastAt: string;
 };
 
+// A configured data-source connector bound to a brain. Connects external
+// knowledge (GitHub, a website, a SQL DB, a webhook push) into the namespace.
+export type DatasourceKind =
+  | "webhook" | "text" | "crawler" | "github" | "sql"
+  | "pdf" | "image" | "mcp" | string;
+
+export type Datasource = {
+  id: string;
+  namespace: string;
+  kind: DatasourceKind;
+  name: string;
+  config: Record<string, unknown>;
+  status: "idle" | "syncing" | "ok" | "error" | string;
+  cursor?: string;
+  lastError?: string;
+  docCount: number;
+  lastSyncAt?: string;
+  createdAt: string;
+};
+
+// Result of POST /api/brain/datasources/sync — how many docs were ingested.
+export type SyncResult = { ingested: number; status: string; error?: string };
+
 export type ApiError = { error: { code: string; message: string } };
 
 // All console calls carry the session cookie (credentials) and — when a JWT was
@@ -233,6 +256,22 @@ export const brainApi = {
   // --- Live agent: chat with a selected brain (RAG grounded in its memories) ---
   chat: (body: { namespace: string; message: string; history?: ChatTurn[]; topK?: number }) =>
     postJSON<ChatAnswer & Partial<ApiError>>("/api/brain/chat", body),
+
+  // --- Data sources: connectors that ingest external knowledge into a brain ---
+  // List every source configured for a brain.
+  datasources: (namespace: string) =>
+    getJSON<{ datasources: Datasource[] }>(`/api/brain/datasources${qs({ namespace })}`),
+  // Create a new source (webhook auto-generates config.secret on the backend).
+  createDatasource: (body: { namespace: string; kind: string; name: string; config: Record<string, unknown> }) =>
+    postJSON<Datasource & Partial<ApiError>>("/api/brain/datasources", body),
+  // Pull/sync a source now — returns how many documents were ingested.
+  syncDatasource: (body: { id: string }) =>
+    postJSON<SyncResult & Partial<ApiError>>("/api/brain/datasources/sync", body),
+  deleteDatasource: (body: { id: string }) =>
+    postJSON<{ deleted: boolean } & Partial<ApiError>>("/api/brain/datasources/delete", body),
+  // Push (webhook) ingest endpoint for a source — the URL to hand out. Callers
+  // POST documents here with header `X-Webhook-Secret: <config.secret>`.
+  ingestUrl: (id: string) => `${(typeof window !== "undefined" && window.location.origin) || API}/api/brain/ingest/${id}`,
 };
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };

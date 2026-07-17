@@ -38,6 +38,22 @@ function hashHue(key: string): string {
   return ENTITY_PALETTE[h % ENTITY_PALETTE.length];
 }
 
+// Identity palette for a *brain* (namespace) and its memory-type labels. Shared
+// by every surface (hub cells, workspace header, search chips) so a given brain
+// reads the same accent colour everywhere — the Shape-of-AI "Color" identifier.
+const BRAIN_PALETTE = [
+  "#6366f1", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6",
+  "#ef4444", "#10b981", "#3b82f6", "#f97316", "#06b6d4",
+  "#a855f7", "#84cc16", "#e11d48", "#0ea5e9", "#d946ef",
+];
+
+/** Stable accent colour for a brain namespace (or any label, e.g. a memory type). */
+export function hueForBrain(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return BRAIN_PALETTE[h % BRAIN_PALETTE.length];
+}
+
 /** Stable color for a node `group`. */
 export function colorForGroup(group: string | undefined): string {
   if (group && STRUCT_COLORS[group]) return STRUCT_COLORS[group];
