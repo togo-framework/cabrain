@@ -1,7 +1,13 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, Download, Trash2, AlertTriangle, HelpCircle, Search, Rocket, Copy, Check } from "lucide-react";
-import { brainApi, type BrainDetail, type NamespaceInfo, type SessionResult } from "../lib/brain";
+import {
+  Database, Download, Trash2, AlertTriangle, HelpCircle, Search, Rocket,
+  ArrowRight, Boxes, Waypoints, Lock,
+} from "lucide-react";
+import { brainApi, type BrainDetail, type NamespaceInfo } from "../lib/brain";
+import { SynapseField } from "../components/neural";
+import { LaunchSessionModal } from "../components/launch-session-modal";
 
 // Stable hue per type name — matches the mindmap palette family.
 const PALETTE = [
@@ -71,87 +77,6 @@ function DeleteBrainModal({ namespace, onClose }: { namespace: string; onClose: 
   );
 }
 
-/** Launch-session modal — mints a scoped token + Claude Code MCP config for this
- * brain (read-only or read+write) and shows the ready-to-paste .mcp.json snippet.
- * The raw token is shown once; copy it now. */
-function LaunchSessionModal({ namespace, onClose }: { namespace: string; onClose: () => void }) {
-  const [write, setWrite] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [res, setRes] = useState<SessionResult | null>(null);
-  const launch = useMutation({
-    mutationFn: () => brainApi.launchSession({ namespace, write, label: `console session for ${namespace}` }),
-    onSuccess: (r) => { if (!r.error) setRes(r); },
-  });
-  const snippet = res ? JSON.stringify(res.mcpConfig, null, 2) : "";
-  const copy = () => {
-    navigator.clipboard?.writeText(snippet).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary"><Rocket className="h-5 w-5" /></span>
-          <div>
-            <div className="font-semibold text-foreground">Launch session</div>
-            <div className="text-xs text-muted-foreground">Start a Claude Code session bound to <code>{namespace}</code>.</div>
-          </div>
-        </div>
-
-        {!res ? (
-          <>
-            <label className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm">
-              <input type="checkbox" checked={write} onChange={(e) => setWrite(e.target.checked)} className="h-4 w-4 accent-primary" />
-              <span className="text-foreground">Allow writes <span className="text-muted-foreground">(retain into this brain)</span></span>
-            </label>
-            {launch.data?.error && (
-              <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
-                {launch.data.error.code}: {launch.data.error.message}
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <button onClick={onClose} className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Cancel</button>
-              <button
-                onClick={() => launch.mutate()}
-                disabled={launch.isPending}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
-              >
-                <Rocket className="h-4 w-4" /> {launch.isPending ? "Minting…" : "Mint session token"}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mb-2 flex items-center gap-2 text-xs">
-              <span className="rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary">{res.namespace}</span>
-              <span className={`rounded-full px-2 py-0.5 font-medium ${res.write ? "bg-emerald-500/15 text-emerald-500" : "bg-muted text-muted-foreground"}`}>
-                {res.write ? "read + write" : "read-only"}
-              </span>
-              <span className="text-muted-foreground">agent {res.agentId}</span>
-            </div>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Paste into <code>.mcp.json</code>, then start Claude Code. The token is shown once — copy it now.
-            </p>
-            <div className="relative">
-              <pre className="max-h-56 overflow-auto rounded-lg border border-border bg-background p-3 text-xs text-foreground"><code>{snippet}</code></pre>
-              <button
-                onClick={copy}
-                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground hover:bg-muted"
-              >
-                {copied ? <><Check className="h-3.5 w-3.5 text-emerald-500" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">{res.howto}</p>
-            <div className="mt-3 flex justify-end">
-              <button onClick={onClose} className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Done</button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function TypeBar({ label, count, max }: { label: string; count: number; max: number }) {
   const pct = max > 0 ? Math.max(4, (count / max) * 100) : 0;
   return (
@@ -165,6 +90,9 @@ function TypeBar({ label, count, max }: { label: string; count: number; max: num
   );
 }
 
+/** One brain, as a card. The title and the prominent Enter action both open the
+ * brain workspace — "open this brain" is the primary gesture (the brain is the
+ * entry point). Launch / Export / Delete stay as secondary admin actions. */
 function BrainCard({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () => void; onLaunch: () => void }) {
   const detail = useQuery({
     queryKey: ["brain", "detail", b.namespace],
@@ -178,18 +106,18 @@ function BrainCard({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () =
   const sources = d ? Object.entries(d.sources).sort((a, c) => c[1] - a[1]) : [];
 
   return (
-    <div className="flex flex-col rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2">
+    <div className="group flex flex-col rounded-xl border border-border bg-card p-4 transition hover:border-primary/50 hover:shadow-sm">
+      <Link to="/b/$namespace" params={{ namespace: b.namespace }} className="flex items-center gap-2">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary"><Database className="h-4 w-4" /></span>
-        <span className="font-medium text-foreground">{b.namespace}</span>
+        <span className="font-medium text-foreground group-hover:text-primary">{b.namespace}</span>
         {d && d.openGaps > 0 && (
           <span className="ms-auto inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-500">
             <HelpCircle className="h-3 w-3" /> {d.openGaps} {d.openGaps === 1 ? "gap" : "gaps"}
           </span>
         )}
-      </div>
+      </Link>
 
-      <div className="text-2xl font-semibold tabular-nums text-foreground">{b.memories.toLocaleString()}</div>
+      <div className="mt-3 text-2xl font-semibold tabular-nums text-foreground">{b.memories.toLocaleString()}</div>
       <div className="text-xs text-muted-foreground">memories · last {b.lastAt ? new Date(b.lastAt).toLocaleDateString() : "—"}</div>
 
       {/* Type breakdown */}
@@ -221,8 +149,17 @@ function BrainCard({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () =
         </div>
       )}
 
-      {/* Admin */}
-      <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
+      {/* Primary: Enter the brain workspace. */}
+      <Link
+        to="/b/$namespace"
+        params={{ namespace: b.namespace }}
+        className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+      >
+        Enter brain <ArrowRight className="h-4 w-4" />
+      </Link>
+
+      {/* Secondary admin actions */}
+      <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
         <button
           onClick={onLaunch}
           className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 px-2.5 py-1.5 text-xs font-medium text-primary transition hover:bg-primary/10"
@@ -246,19 +183,49 @@ function BrainCard({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () =
   );
 }
 
-/** Brains = datasets/namespaces (Cognee calls them "brains"). */
-export function BrainBrains() {
+/** Small global stat chip for the hub hero. */
+function HeroStat({ icon: Icon, label, value, loading }: { icon: any; label: string; value: number; loading: boolean }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-card/70 px-3 py-2 backdrop-blur">
+      <Icon className="h-4 w-4 text-primary" />
+      <div>
+        <div className="text-sm font-semibold tabular-nums text-foreground">{loading ? "—" : value.toLocaleString()}</div>
+        <div className="text-[11px] text-muted-foreground">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Brains hub — the main entry point of the console. Everything is wired over the
+ * brain: this is the landing that lists every brain, and each card opens that
+ * brain's scoped workspace. Brains = datasets/namespaces (Cognee calls them "brains"). */
+export function BrainsHub() {
   const q = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces, refetchInterval: 15_000 });
+  const stats = useQuery({ queryKey: ["brain", "stats"], queryFn: brainApi.stats, refetchInterval: 10_000 });
   const brains = q.data?.brains ?? [];
   const [deleteNs, setDeleteNs] = useState<string | null>(null);
   const [launchNs, setLaunchNs] = useState<string | null>(null);
+  const loading = stats.isLoading;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Brains</h1>
-        <p className="text-sm text-muted-foreground">Namespaces — each an isolated scope over the one shared store.</p>
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
+      {/* Neural hero — the brain is the entry point. */}
+      <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-indigo-500/10 via-violet-500/5 to-teal-400/10 p-6">
+        <SynapseField className="opacity-40" />
+        <div className="relative">
+          <h1 className="text-2xl font-semibold text-foreground">Brains</h1>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Your organization's shared memory — one store, many brains. Open a brain to explore its graph, sessions, gaps and secrets.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <HeroStat icon={Database} label="brains" value={stats.data?.brains ?? brains.length} loading={loading} />
+            <HeroStat icon={Boxes} label="memories" value={stats.data?.memories ?? 0} loading={loading} />
+            <HeroStat icon={Waypoints} label="graph nodes" value={stats.data?.entities ?? 0} loading={loading} />
+            <HeroStat icon={HelpCircle} label="open gaps" value={stats.data?.openGaps ?? 0} loading={loading} />
+          </div>
+        </div>
       </div>
+
       {brains.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
           {q.isLoading ? "Loading…" : "No brains yet. A namespace appears the first time you retain into it."}
@@ -275,6 +242,13 @@ export function BrainBrains() {
           ))}
         </div>
       )}
+
+      {/* Tokens, users and cross-brain admin live out of the main flow. */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
+        <Lock className="h-3.5 w-3.5" /> Tokens, users and cross-brain admin live under
+        <Link to="/admin/users" className="font-medium text-primary hover:underline">Admin</Link>.
+      </div>
+
       {deleteNs && <DeleteBrainModal namespace={deleteNs} onClose={() => setDeleteNs(null)} />}
       {launchNs && <LaunchSessionModal namespace={launchNs} onClose={() => setLaunchNs(null)} />}
     </div>

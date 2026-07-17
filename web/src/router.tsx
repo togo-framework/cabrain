@@ -1,41 +1,101 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect, useParams, Outlet } from "@tanstack/react-router";
 import { Providers } from "./providers";
 import { AuthGate } from "./routes/auth-gate";
-import { BrainLayout } from "./routes/brain-layout";
-import { BrainDashboard } from "./routes/brain-dashboard";
+import { RealtimeProvider } from "./lib/realtime";
+import { HubLayout } from "./routes/hub-layout";
+import { BrainWorkspaceLayout } from "./routes/workspace-layout";
+import { AdminLayout } from "./routes/admin-layout";
+import { BrainsHub } from "./routes/brain-brains";
+import { BrainOverview } from "./routes/brain-overview";
 import { BrainSearch } from "./routes/brain-search";
-import { BrainGraph } from "./routes/brain-graph";
-import { BrainBrains } from "./routes/brain-brains";
 import { BrainSessions } from "./routes/brain-sessions";
-import { BrainGaps } from "./routes/brain-gaps";
-import { BrainPermissions } from "./routes/brain-permissions";
 import { BrainSecrets } from "./routes/brain-secrets";
+import { BrainGaps } from "./routes/brain-gaps";
+import { BrainActivity } from "./routes/brain-activity";
+import { BrainWorkspacePermissions } from "./routes/brain-workspace-permissions";
 import { BrainUsers } from "./routes/brain-users";
+import { BrainPermissions } from "./routes/brain-permissions";
 
-// CaBrain memory console — the Cognee-style surface over the brain plugin.
-// The whole console lives under the BrainLayout shell (sidebar + header), wrapped
-// by <AuthGate>: when the backend enforces auth (CABRAIN_REQUIRE_AUTH) and there
-// is no session, the login page replaces the console; otherwise it renders as-is
-// (unauthenticated by default so local/dev stays reachable).
+// CaBrain memory console — everything is wired over the brain. The BRAIN is the
+// main entry: "/" is the Brains hub, each brain opens a scoped workspace at
+// /b/$namespace (graph/mindmap centerpiece + its own sections), and cross-brain
+// admin (users, tokens, global search) lives out of the main flow under /admin.
+//
+// The whole console is wrapped by <AuthGate>: when the backend enforces auth
+// (CABRAIN_REQUIRE_AUTH) and there is no session, the login page replaces it;
+// otherwise it renders as-is. RealtimeProvider (single shared SSE stream) wraps
+// the authed content so every layout live-updates.
 const rootRoute = createRootRoute({
-  component: () => (<Providers><AuthGate><Outlet /></AuthGate></Providers>),
+  component: () => (
+    <Providers>
+      <AuthGate>
+        <RealtimeProvider>
+          <Outlet />
+        </RealtimeProvider>
+      </AuthGate>
+    </Providers>
+  ),
 });
 
-const consoleRoute = createRoute({ getParentRoute: () => rootRoute, id: "_console", component: BrainLayout });
-const dashboardRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/", component: BrainDashboard });
-const searchRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/search", component: BrainSearch });
-const graphRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/graph", component: BrainGraph });
-const brainsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/brains", component: BrainBrains });
-const gapsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/gaps", component: BrainGaps });
-const permissionsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/permissions", component: BrainPermissions });
-const secretsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/secrets", component: BrainSecrets });
-const usersRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/users", component: BrainUsers });
-const sessionsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/sessions", component: BrainSessions });
+// Read the $namespace route param for the scoped workspace pages.
+function useNamespace(): string {
+  return (useParams({ strict: false }) as { namespace?: string }).namespace ?? "";
+}
+
+// ── Hub (the entry point) ────────────────────────────────────────────────────
+const hubLayoutRoute = createRoute({ getParentRoute: () => rootRoute, id: "_hub", component: HubLayout });
+const hubIndexRoute = createRoute({ getParentRoute: () => hubLayoutRoute, path: "/", component: BrainsHub });
+
+// Old flat nav → sensible redirects so deep links don't break.
+const mkRedirect = (path: string, to: string) =>
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path,
+    beforeLoad: () => { throw redirect({ to }); },
+    component: () => null,
+  });
+const redirects = [
+  mkRedirect("/dashboard", "/"),
+  mkRedirect("/brains", "/"),
+  mkRedirect("/search", "/admin/search"),
+  mkRedirect("/graph", "/"),
+  mkRedirect("/gaps", "/"),
+  mkRedirect("/sessions", "/"),
+  mkRedirect("/secrets", "/"),
+  mkRedirect("/permissions", "/admin/tokens"),
+  mkRedirect("/users", "/admin/users"),
+];
+
+// ── Brain workspace (scoped to $namespace) ───────────────────────────────────
+const workspaceLayoutRoute = createRoute({ getParentRoute: () => rootRoute, path: "/b/$namespace", component: BrainWorkspaceLayout });
+const wsOverviewRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/", component: () => <BrainOverview namespace={useNamespace()} /> });
+const wsSearchRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/search", component: () => <BrainSearch namespace={useNamespace()} /> });
+const wsSessionsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/sessions", component: () => <BrainSessions namespace={useNamespace()} /> });
+const wsSecretsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/secrets", component: () => <BrainSecrets namespace={useNamespace()} /> });
+const wsGapsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/gaps", component: () => <BrainGaps namespace={useNamespace()} /> });
+const wsPermissionsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/permissions", component: () => <BrainWorkspacePermissions namespace={useNamespace()} /> });
+const wsActivityRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/activity", component: () => <BrainActivity namespace={useNamespace()} /> });
+
+// ── Global admin (out of the main flow) ──────────────────────────────────────
+const adminLayoutRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin", component: AdminLayout });
+const adminIndexRoute = createRoute({
+  getParentRoute: () => adminLayoutRoute, path: "/",
+  beforeLoad: () => { throw redirect({ to: "/admin/users" }); },
+  component: () => null,
+});
+const adminUsersRoute = createRoute({ getParentRoute: () => adminLayoutRoute, path: "/users", component: BrainUsers });
+const adminTokensRoute = createRoute({ getParentRoute: () => adminLayoutRoute, path: "/tokens", component: BrainPermissions });
+const adminSearchRoute = createRoute({ getParentRoute: () => adminLayoutRoute, path: "/search", component: () => <BrainSearch /> });
 
 const routeTree = rootRoute.addChildren([
-  consoleRoute.addChildren([
-    dashboardRoute, searchRoute, graphRoute, brainsRoute,
-    gapsRoute, permissionsRoute, secretsRoute, usersRoute, sessionsRoute,
+  hubLayoutRoute.addChildren([hubIndexRoute]),
+  ...redirects,
+  workspaceLayoutRoute.addChildren([
+    wsOverviewRoute, wsSearchRoute, wsSessionsRoute, wsSecretsRoute,
+    wsGapsRoute, wsPermissionsRoute, wsActivityRoute,
+  ]),
+  adminLayoutRoute.addChildren([
+    adminIndexRoute, adminUsersRoute, adminTokensRoute, adminSearchRoute,
   ]),
 ]);
 
