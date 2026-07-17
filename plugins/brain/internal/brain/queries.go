@@ -216,6 +216,15 @@ func (s *Store) derivedGraph(ctx context.Context, db *sql.DB, namespace string, 
 		return g, nil
 	}
 
+	// Rich path: if this brain has venture-structured metadata, build a real
+	// portfolio → venture → entity graph instead of the flat type tree.
+	var ventureCount int
+	_ = db.QueryRowContext(ctx,
+		`SELECT count(*) FROM memories WHERE namespace=$1 AND invalid_at IS NULL AND metadata->>'type'='venture'`, namespace).Scan(&ventureCount)
+	if ventureCount > 0 {
+		return s.ventureGraph(ctx, db, namespace, limit)
+	}
+
 	g.Nodes = append(g.Nodes, GraphNode{ID: "root", Name: namespace, Group: "root"})
 	// level 1: types
 	trows, err := db.QueryContext(ctx, `
@@ -262,6 +271,63 @@ func (s *Store) derivedGraph(ctx context.Context, db *sql.DB, namespace string, 
 			if erows.Scan(&id, &name) == nil {
 				g.Nodes = append(g.Nodes, GraphNode{ID: "ent:" + id, Name: name, Group: t})
 				g.Edges = append(g.Edges, GraphEdge{Source: "type:" + t, Target: "ent:" + id})
+			}
+		}
+		erows.Close()
+	}
+	return g, nil
+}
+
+// ventureGraph builds a real knowledge graph from venture-structured metadata:
+// portfolio → venture → entities (issues/posts/people/... linked via
+// metadata->>'venture'). Much richer than the flat namespace→type→sample tree.
+func (s *Store) ventureGraph(ctx context.Context, db *sql.DB, ns string, limit int) (*GraphData, error) {
+	g := &GraphData{Ready: true, Derived: true, Nodes: []GraphNode{}, Edges: []GraphEdge{}}
+	g.Nodes = append(g.Nodes, GraphNode{ID: "root", Name: ns, Group: "root"})
+
+	// Relationships are recoverable from the content text (portfolio, venture name),
+	// since the structured metadata was dropped by an earlier retain bug. Extract
+	// them in SQL: "Venture: <name> … Portfolio: <pf>" and entity "in venture <name>".
+	ventureSet := map[string]bool{}
+	portfolios := map[string]bool{}
+	vrows, err := db.QueryContext(ctx, `
+		SELECT DISTINCT
+		  trim(substring(content from 'Venture: ([^(\n]+)')) AS vname,
+		  COALESCE(NULLIF(trim(substring(content from 'Portfolio: ([A-Za-z0-9_ -]+)')),''),'unassigned') AS pf
+		FROM memories WHERE namespace=$1 AND invalid_at IS NULL AND metadata->>'type'='venture'`, ns)
+	if err != nil {
+		return g, nil
+	}
+	for vrows.Next() {
+		var vname, pf string
+		if vrows.Scan(&vname, &pf) == nil && vname != "" {
+			if !portfolios[pf] {
+				portfolios[pf] = true
+				g.Nodes = append(g.Nodes, GraphNode{ID: "pf:" + pf, Name: pf, Group: "portfolio"})
+				g.Edges = append(g.Edges, GraphEdge{Source: "root", Target: "pf:" + pf})
+			}
+			g.Nodes = append(g.Nodes, GraphNode{ID: "v:" + vname, Name: vname, Group: "venture"})
+			g.Edges = append(g.Edges, GraphEdge{Source: "pf:" + pf, Target: "v:" + vname})
+			ventureSet[vname] = true
+		}
+	}
+	vrows.Close()
+
+	// entities linked to a venture by name (capped).
+	erows, err := db.QueryContext(ctx, `
+		SELECT id::text, COALESCE(NULLIF(metadata->>'type',''),'item') AS t,
+		       trim(substring(content from ' in venture ([^:.\n]+)')) AS vname,
+		       left(regexp_replace(content,'\s+',' ','g'), 44) AS name
+		FROM memories
+		WHERE namespace=$1 AND invalid_at IS NULL AND metadata->>'type' <> 'venture'
+		      AND content LIKE '%in venture %'
+		ORDER BY valid_at DESC LIMIT `+itoa(limit), ns)
+	if err == nil {
+		for erows.Next() {
+			var id, t, v, name string
+			if erows.Scan(&id, &t, &v, &name) == nil && ventureSet[v] {
+				g.Nodes = append(g.Nodes, GraphNode{ID: "ent:" + id, Name: name, Group: t})
+				g.Edges = append(g.Edges, GraphEdge{Source: "v:" + v, Target: "ent:" + id})
 			}
 		}
 		erows.Close()
