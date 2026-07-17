@@ -34,7 +34,11 @@ replace github.com/togo-framework/brain-cognee => ./plugins/brain-cognee
 
 replace github.com/togo-framework/cache-redis => ./plugins/cache-redis
 
-require github.com/jackc/pgx/v5 v5.7.1
+require (
+	github.com/jackc/pgx/v5 v5.7.1
+	github.com/togo-framework/auth v0.8.0
+	github.com/togo-framework/auth-dev v0.1.0
+)
 
 require (
 	github.com/agnivade/levenshtein v1.2.0 // indirect
@@ -43,6 +47,7 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -57,6 +62,7 @@ require (
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sosodev/duration v1.3.1 // indirect
+	github.com/togo-framework/orm v0.1.0 // indirect
 	github.com/togo-framework/providers v0.1.0 // indirect
 	github.com/togo-framework/settings v0.1.1 // indirect
 	github.com/urfave/cli/v2 v2.27.5 // indirect

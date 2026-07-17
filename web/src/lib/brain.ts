@@ -1,5 +1,6 @@
 // Client for the brain plugin's console API (/api/brain/*).
 import { API } from "./api";
+import { authHeaders } from "./auth";
 
 export type Stats = {
   ready: boolean;
@@ -113,15 +114,19 @@ export type BrainDetail = {
 
 export type ApiError = { error: { code: string; message: string } };
 
+// All console calls carry the session cookie (credentials) and — when a JWT was
+// captured at login — the Authorization: Bearer header, so the backend console
+// auth gate (CABRAIN_REQUIRE_AUTH) accepts either transport.
 async function getJSON<T>(path: string): Promise<T> {
-  const r = await fetch(`${API}${path}`);
+  const r = await fetch(`${API}${path}`, { credentials: "include", headers: { ...authHeaders() } });
   return r.json() as Promise<T>;
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${API}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    credentials: "include",
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return r.json() as Promise<T>;
@@ -137,7 +142,9 @@ const qs = (params: Record<string, string | number | undefined>) => {
 };
 
 export const brainApi = {
-  ping: () => getJSON<{ plugin: string; status: string }>("/api/brain/ping"),
+  // `authRequired` reflects the backend CABRAIN_REQUIRE_AUTH flag — the SPA uses
+  // it to decide whether to show the login gate before hitting a gated endpoint.
+  ping: () => getJSON<{ plugin: string; status: string; authRequired?: boolean }>("/api/brain/ping"),
   stats: () => getJSON<Stats>("/api/brain/stats"),
   activity: (limit = 50) => getJSON<{ items: ActivityItem[] }>(`/api/brain/activity?limit=${limit}`),
   namespaces: () => getJSON<{ brains: NamespaceInfo[] }>("/api/brain/namespaces"),

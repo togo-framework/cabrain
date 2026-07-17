@@ -1,12 +1,35 @@
 import { Outlet, useNavigate, useRouterState, Link } from "@tanstack/react-router";
-import { LayoutDashboard, Search, Waypoints, Database, Activity, HelpCircle, KeyRound, Users } from "lucide-react";
+import { LayoutDashboard, Search, Waypoints, Database, Activity, HelpCircle, KeyRound, Users, LogOut } from "lucide-react";
 import {
   SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
   SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuItem, SidebarMenuButton,
-  SidebarInset, SidebarTrigger, StatusBadge, ThemePicker,
+  SidebarInset, SidebarTrigger, StatusBadge, ThemePicker, Button,
 } from "@togo-framework/ui";
 import { RealtimeProvider, LiveIndicator } from "../lib/realtime";
 import { NeuralGlyph } from "../components/neural";
+import { useSession } from "./auth-gate";
+import { auth } from "../lib/auth";
+
+// UserMenu shows the signed-in identity + a sign-out control. It only appears when
+// there is an active session (auth may be off, in which case there's nothing to
+// show). Sign out clears the session then reloads so the AuthGate re-evaluates.
+function UserMenu() {
+  const { me } = useSession();
+  if (!me) return null;
+  const label = me.email || (Array.isArray(me.roles) && me.roles[0]) || "signed in";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden text-xs text-muted-foreground sm:inline">
+        Signed in as <span className="font-medium text-foreground">{label}</span>
+      </span>
+      <Button variant="ghost" size="sm" title="Sign out"
+        onClick={async () => { await auth.logout(); window.location.reload(); }}>
+        <LogOut className="h-4 w-4" />
+        <span className="hidden sm:inline">Sign out</span>
+      </Button>
+    </div>
+  );
+}
 
 // Memory surface + Admin surface. Admin (permissions/users) is grouped apart so
 // the trust boundary reads at a glance.
@@ -81,6 +104,7 @@ export function BrainLayout() {
               <LiveIndicator />
               <StatusBadge tone="neutral">togo-postgres</StatusBadge>
               <ThemePicker size="default" />
+              <UserMenu />
             </div>
           </header>
           <main className="min-w-0 flex-1 overflow-auto"><Outlet /></main>
