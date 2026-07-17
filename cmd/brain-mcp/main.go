@@ -197,6 +197,17 @@ func (s *server) callTool(req *rpcReq) {
 	case "memory_resolve_gap":
 		body, code, err = s.post("/api/brain/gaps/resolve", map[string]any{
 			"id": args["id"], "status": args["status"], "resolution": args["resolution"]})
+	case "brain_list":
+		body, code, err = s.get("/api/brain/namespaces", nil)
+	case "brain_details":
+		body, code, err = s.get("/api/brain/brain", url.Values{"namespace": {str(args["namespace"])}})
+	case "memory_edit":
+		body, code, err = s.post("/api/brain/memory/edit", map[string]any{
+			"namespace": args["namespace"], "id": args["id"], "content": args["content"],
+			"importance": args["importance"], "metadata": args["metadata"]})
+	case "brain_delete":
+		body, code, err = s.post("/api/brain/brain/delete", map[string]any{
+			"namespace": args["namespace"], "confirm": args["confirm"]})
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return

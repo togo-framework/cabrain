@@ -99,4 +99,35 @@ var toolDefs = []map[string]any{
 			"resolution": prop{"type": "string", "description": "optional note"},
 		}, "id", "status"),
 	},
+	{
+		"name":        "brain_list",
+		"description": "List the brains (namespaces) with their memory counts — the top level of what's stored.",
+		"inputSchema": obj(prop{}),
+	},
+	{
+		"name":        "brain_details",
+		"description": "Detailed view of one brain (namespace): memory count, breakdown by type and source, open gaps, recall activity, first/last dates.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+		}, "namespace"),
+	},
+	{
+		"name":        "memory_edit",
+		"description": "Edit an existing memory by id — change its content (re-embeds), importance, or metadata. Namespace + id required.",
+		"inputSchema": obj(prop{
+			"namespace":  prop{"type": "string"},
+			"id":         prop{"type": "string", "description": "memory UUID"},
+			"content":    prop{"type": "string", "description": "new content (optional; re-embeds)"},
+			"importance": prop{"type": "number", "description": "0..1 (optional)"},
+			"metadata":   prop{"type": "object", "description": "replacement metadata (optional)"},
+		}, "namespace", "id"),
+	},
+	{
+		"name":        "brain_delete",
+		"description": "DELETE a whole brain (namespace) and all its memories — destructive. `confirm` MUST equal the namespace.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"confirm":   prop{"type": "string", "description": "must equal namespace to proceed"},
+		}, "namespace", "confirm"),
+	},
 }
