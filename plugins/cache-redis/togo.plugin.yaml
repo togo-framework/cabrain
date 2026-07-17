@@ -1,0 +1,6 @@
+name: cache-redis
+description: Redis driver for the togo cache service — CACHE_DRIVER=redis makes CaBrain's L1 working-memory cache a shared Redis tier. Connection via REDIS_URL (default redis://redis:6379).
+priority: 50
+backend:
+  package: github.com/togo-framework/cache-redis
+commands: []

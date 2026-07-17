@@ -10,6 +10,7 @@ require (
 	github.com/togo-framework/brain-cognee v0.0.0
 	github.com/togo-framework/brain-tei v0.0.0
 	github.com/togo-framework/cache v0.3.0
+	github.com/togo-framework/cache-redis v0.0.0
 	github.com/togo-framework/db-postgres v0.1.0
 	github.com/togo-framework/queue v0.3.0
 	github.com/togo-framework/storage v0.2.0
@@ -31,11 +32,15 @@ replace github.com/togo-framework/brain-tei => ./plugins/brain-tei
 
 replace github.com/togo-framework/brain-cognee => ./plugins/brain-cognee
 
+replace github.com/togo-framework/cache-redis => ./plugins/cache-redis
+
 require github.com/jackc/pgx/v5 v5.7.1
 
 require (
 	github.com/agnivade/levenshtein v1.2.0 // indirect
+	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -47,6 +52,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/redis/go-redis/v9 v9.7.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect

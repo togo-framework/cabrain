@@ -8,4 +8,5 @@ import (
 	_ "github.com/togo-framework/brain"
 	_ "github.com/togo-framework/brain-cognee"
 	_ "github.com/togo-framework/brain-tei"
+	_ "github.com/togo-framework/cache-redis"
 )
