@@ -24,10 +24,16 @@ CABRAIN_PW=$(echo "$CABRAIN_DATABASE_URL" | sed -E 's|.*://cabrain:([^@]+)@.*|\1
 # the NPM upstream round-robining onto an OLD, unenforced container, so the public
 # URL was intermittently reachable without auth. Never touch the cabrain-deploy
 # webhook receiver (different image, keeps the pipeline alive).
-for c in $(sudo docker ps -a --format '{{.Names}}' | grep -E '^cabrain' | grep -vx 'cabrain-deploy'); do
+# Match by NAME or IMAGE containing "cabrain" (any tag) — a rogue container from an
+# earlier manual run had a non-cabrain* name AND a since-retagged image, so the
+# name-only + ancestor=cabrain:latest filters missed it and it kept serving FlowOS
+# data UNAUTHENTICATED on the NPM upstream. Never remove the deploy webhook
+# (cabrain-deploy / stack-webhook image).
+for c in $(sudo docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}' \
+            | grep -iE 'cabrain' | grep -viE 'cabrain-deploy|stack-webhook' \
+            | cut -d'|' -f1); do
   echo "removing stale app container: $c"; sudo docker rm -f "$c" 2>/dev/null || true
 done
-for c in $(sudo docker ps -aq --filter ancestor=cabrain:latest); do sudo docker rm -f "$c" 2>/dev/null || true; done
 sudo -E docker run -d --name cabrain \
   --network stack_stacknet --restart unless-stopped \
   --env-file /mnt/c/services/cabrain/.env \
