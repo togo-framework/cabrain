@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { Providers } from "./providers";
+import { AuthGate } from "./routes/auth-gate";
 import { BrainLayout } from "./routes/brain-layout";
 import { BrainDashboard } from "./routes/brain-dashboard";
 import { BrainSearch } from "./routes/brain-search";
@@ -11,9 +12,13 @@ import { BrainPermissions } from "./routes/brain-permissions";
 import { BrainUsers } from "./routes/brain-users";
 
 // CaBrain memory console — the Cognee-style surface over the brain plugin.
-// Un-gated: this is a memory tool, not an auth app; the whole console lives under
-// the BrainLayout shell (sidebar + header).
-const rootRoute = createRootRoute({ component: () => (<Providers><Outlet /></Providers>) });
+// The whole console lives under the BrainLayout shell (sidebar + header), wrapped
+// by <AuthGate>: when the backend enforces auth (CABRAIN_REQUIRE_AUTH) and there
+// is no session, the login page replaces the console; otherwise it renders as-is
+// (unauthenticated by default so local/dev stays reachable).
+const rootRoute = createRootRoute({
+  component: () => (<Providers><AuthGate><Outlet /></AuthGate></Providers>),
+});
 
 const consoleRoute = createRoute({ getParentRoute: () => rootRoute, id: "_console", component: BrainLayout });
 const dashboardRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/", component: BrainDashboard });
