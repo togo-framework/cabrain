@@ -20,3 +20,9 @@
 # Python
 __pycache__/
 *.pyc
+
+# built binaries
+/brain-mcp
+/cabrain-api
+cmd/hubq/
+cmd/sqlx/
