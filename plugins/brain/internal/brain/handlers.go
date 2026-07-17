@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -178,6 +179,14 @@ func (s *Service) identify(r *http.Request) caller {
 	}
 	// Enforcement ON + no token → must be a known, granted agent (never admin).
 	return caller{agent: agent, valid: agent != ""}
+}
+
+// ValidToken reports whether a raw token resolves to a live (non-revoked) token.
+// Used by the security gate to let MCP callers (who present X-Cabrain-Token, not a
+// login session) through when console auth enforcement is on.
+func (s *Service) ValidToken(ctx context.Context, tok string) bool {
+	_, _, ok := s.Store.ResolveToken(ctx, tok)
+	return ok
 }
 
 func (s *Service) canRead(r *http.Request, ns string) bool {
