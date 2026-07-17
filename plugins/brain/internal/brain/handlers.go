@@ -402,6 +402,9 @@ func (s *Service) Chat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no access to brain "+in.Namespace))
 		return
 	}
+	// Gate the agent's write-back (retain) tool behind real write permission — a body
+	// flag must never escalate a read-only session into a writer.
+	in.Write = in.Write && s.canWrite(r, in.Namespace)
 	ans, err := s.Store.Chat(r.Context(), in)
 	if err != nil {
 		writeErr(w, err)
