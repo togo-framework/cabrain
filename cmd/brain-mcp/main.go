@@ -251,6 +251,15 @@ func (s *server) callTool(req *rpcReq) {
 	case "secret_delete":
 		body, code, err = s.post("/api/brain/secrets/delete", map[string]any{
 			"namespace": args["namespace"], "name": args["name"]})
+	case "datasource_list":
+		body, code, err = s.get("/api/brain/datasources", url.Values{"namespace": {str(args["namespace"])}})
+	case "datasource_create":
+		body, code, err = s.post("/api/brain/datasources", map[string]any{
+			"namespace": args["namespace"], "kind": args["kind"], "name": args["name"], "config": args["config"]})
+	case "datasource_sync":
+		body, code, err = s.post("/api/brain/datasources/sync", map[string]any{"id": args["id"]})
+	case "datasource_delete":
+		body, code, err = s.post("/api/brain/datasources/delete", map[string]any{"id": args["id"]})
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return

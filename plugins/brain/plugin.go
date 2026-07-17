@@ -135,6 +135,13 @@ func init() {
 		k.Router.Post("/api/brain/secrets", secured(svc.SecretPut))
 		k.Router.Post("/api/brain/secrets/reveal", secured(svc.SecretReveal))
 		k.Router.Post("/api/brain/secrets/delete", secured(svc.SecretDelete))
+		// Data sources (connectors). Console CRUD is secured (session/token); the
+		// webhook push path is NOT secured — it authenticates by its own X-Webhook-Secret.
+		k.Router.Get("/api/brain/datasources", secured(svc.Datasources))
+		k.Router.Post("/api/brain/datasources", secured(svc.CreateDatasource))
+		k.Router.Post("/api/brain/datasources/sync", secured(svc.SyncDatasource))
+		k.Router.Post("/api/brain/datasources/delete", secured(svc.DeleteDatasource))
+		k.Router.Post("/api/brain/ingest/{id}", svc.IngestWebhook)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name, "consoleAuth", authRequired())
