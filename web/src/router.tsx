@@ -6,6 +6,9 @@ import { BrainSearch } from "./routes/brain-search";
 import { BrainGraph } from "./routes/brain-graph";
 import { BrainBrains } from "./routes/brain-brains";
 import { BrainSessions } from "./routes/brain-sessions";
+import { BrainGaps } from "./routes/brain-gaps";
+import { BrainPermissions } from "./routes/brain-permissions";
+import { BrainUsers } from "./routes/brain-users";
 
 // CaBrain memory console — the Cognee-style surface over the brain plugin.
 // Un-gated: this is a memory tool, not an auth app; the whole console lives under
@@ -17,10 +20,16 @@ const dashboardRoute = createRoute({ getParentRoute: () => consoleRoute, path: "
 const searchRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/search", component: BrainSearch });
 const graphRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/graph", component: BrainGraph });
 const brainsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/brains", component: BrainBrains });
+const gapsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/gaps", component: BrainGaps });
+const permissionsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/permissions", component: BrainPermissions });
+const usersRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/users", component: BrainUsers });
 const sessionsRoute = createRoute({ getParentRoute: () => consoleRoute, path: "/sessions", component: BrainSessions });
 
 const routeTree = rootRoute.addChildren([
-  consoleRoute.addChildren([dashboardRoute, searchRoute, graphRoute, brainsRoute, sessionsRoute]),
+  consoleRoute.addChildren([
+    dashboardRoute, searchRoute, graphRoute, brainsRoute,
+    gapsRoute, permissionsRoute, usersRoute, sessionsRoute,
+  ]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
