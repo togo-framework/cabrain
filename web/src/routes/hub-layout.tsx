@@ -6,7 +6,7 @@ import {
   SidebarInset, SidebarTrigger, StatusBadge, ThemePicker,
 } from "@togo-framework/ui";
 import { LiveIndicator } from "../lib/realtime";
-import { NeuralGlyph } from "../components/neural";
+import { NeuralGlyph, NeuralBackdrop } from "../components/neural";
 import { UserMenu } from "../components/chrome";
 
 // The brain hub is the entry point. Its sidebar is deliberately small: the Brains
@@ -69,7 +69,8 @@ export function HubLayout() {
       </Sidebar>
 
       <SidebarInset>
-        <header className="flex h-14 items-center justify-between gap-2 border-b border-border px-4">
+        <NeuralBackdrop className="opacity-60" />
+        <header className="relative z-10 flex h-14 items-center justify-between gap-2 border-b border-border px-4">
           <div className="flex items-center gap-3">
             <SidebarTrigger />
             <span className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
@@ -83,7 +84,7 @@ export function HubLayout() {
             <UserMenu />
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-auto"><Outlet /></main>
+        <main className="relative z-10 min-w-0 flex-1 overflow-auto"><Outlet /></main>
       </SidebarInset>
     </SidebarProvider>
   );

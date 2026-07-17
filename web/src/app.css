@@ -11,3 +11,59 @@ body { margin: 0; font-family: var(--tg-font); }
 @layer base {
   body { @apply bg-background text-foreground antialiased; }
 }
+
+/* ── Neural visual language ────────────────────────────────────────────────
+   Hand-rolled keyframes (no libs) shared by the brain surfaces so the whole
+   console reads as one living organism: brains are glowing neural cells whose
+   soma breathes, whose synapse rings pulse, and whose connecting axons flow.
+   Everything degrades to static under prefers-reduced-motion. */
+
+@keyframes cabrain-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+@keyframes cabrain-halo {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 0.85; transform: scale(1.08); }
+}
+@keyframes cabrain-ring {
+  0% { transform: scale(0.7); opacity: 0.55; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+@keyframes cabrain-flow {
+  to { stroke-dashoffset: -1000; }
+}
+@keyframes cabrain-drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes cabrain-spark {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+@keyframes cabrain-fire {
+  0% { transform: scale(0.6); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: scale(1); opacity: 0.65; }
+}
+
+/* Soma (brain core) gently breathing. */
+.cb-breathe { animation: cabrain-breathe 4.5s ease-in-out infinite; transform-origin: center; }
+/* Radial glow halo behind a cell. */
+.cb-halo { animation: cabrain-halo 5s ease-in-out infinite; transform-origin: center; }
+/* Expanding synapse ring (firing pulse). */
+.cb-ring { animation: cabrain-ring 3.2s ease-out infinite; transform-origin: center; }
+/* Flowing axon (dashed synapse line carrying a signal). */
+.cb-flow { stroke-dasharray: 4 10; animation: cabrain-flow 14s linear infinite; }
+/* Slow organic drift for decorative nodes. */
+.cb-drift { animation: cabrain-drift 6s ease-in-out infinite; }
+/* Synapse spark twinkle. */
+.cb-spark { animation: cabrain-spark 2.6s ease-in-out infinite; }
+/* Entry "fire" for a cell mount. */
+.cb-fire { animation: cabrain-fire 0.6s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-breathe, .cb-halo, .cb-ring, .cb-flow, .cb-drift, .cb-spark, .cb-fire {
+    animation: none !important;
+  }
+}

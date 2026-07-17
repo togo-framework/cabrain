@@ -6,7 +6,7 @@ import {
   SidebarInset, SidebarTrigger, ThemePicker,
 } from "@togo-framework/ui";
 import { LiveIndicator } from "../lib/realtime";
-import { NeuralGlyph } from "../components/neural";
+import { NeuralGlyph, NeuralBackdrop } from "../components/neural";
 import { UserMenu } from "../components/chrome";
 
 // Cross-brain admin, kept out of the main brain flow. Users + Tokens/ACL are the
@@ -58,7 +58,8 @@ export function AdminLayout() {
       </Sidebar>
 
       <SidebarInset>
-        <header className="flex h-14 items-center justify-between gap-2 border-b border-border px-4">
+        <NeuralBackdrop className="opacity-50" />
+        <header className="relative z-10 flex h-14 items-center justify-between gap-2 border-b border-border px-4">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
             <nav className="flex items-center gap-1.5 text-sm">
@@ -73,7 +74,7 @@ export function AdminLayout() {
             <UserMenu />
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-auto"><Outlet /></main>
+        <main className="relative z-10 min-w-0 flex-1 overflow-auto"><Outlet /></main>
       </SidebarInset>
     </SidebarProvider>
   );
