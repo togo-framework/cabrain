@@ -1,51 +1,42 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 set -e
-export DOCKER_HOST=unix:///mnt/wsl/docker-desktop/shared-sockets/host-services/docker.proxy.sock
-export DOCKER_CONFIG=/tmp/dc-clean
-export PATH=/usr/bin:/usr/local/bin:$PATH
-
-SRC=/home/fadymondy/services/cabrain-src
-LOG=/home/fadymondy/services/cabrain-deploy/last.log
+export DOCKER_HOST=unix:///var/run/docker.sock
+LOG=/deploy/last.log
 : > "$LOG"; exec >>"$LOG" 2>&1
 echo "=== [$(date -Is)] deploy triggered ==="
 
-cd "$SRC"
+. /deploy/.env
+
+if [ ! -d /src/.git ]; then
+  git clone https://x-access-token:${GITHUB_TOKEN}@github.com/togo-framework/cabrain.git /src
+fi
+cd /src
+git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/togo-framework/cabrain.git
 git fetch --all --prune 2>&1 | tail -3
-git reset --hard origin/main 2>&1 | tail -3
+git checkout main 2>&1 | tail -2 || true
+git reset --hard origin/main 2>&1 | tail -2
 echo "  HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
-sudo -E DOCKER_CONFIG=/tmp/dc-clean DOCKER_BUILDKIT=1 docker build -t cabrain:latest . 2>&1 | tail -15
+echo "  --- verifying gen dirs exist ---"
+ls -d internal/db/gen internal/graph/gen 2>&1
 
-. /mnt/c/services/cabrain/.env
+docker build -t cabrain:latest . 2>&1 | tail -12
+
 CABRAIN_PW=$(echo "$CABRAIN_DATABASE_URL" | sed -E 's|.*://cabrain:([^@]+)@.*|\1|')
-
-# Remove ANY stale/duplicate app container before starting — a leftover from an
-# earlier deploy (any cabrain* name, and anything built from the app image) left
-# the NPM upstream round-robining onto an OLD, unenforced container, so the public
-# URL was intermittently reachable without auth. Never touch the cabrain-deploy
-# webhook receiver (different image, keeps the pipeline alive).
-# Match by NAME or IMAGE containing "cabrain" (any tag) — a rogue container from an
-# earlier manual run had a non-cabrain* name AND a since-retagged image, so the
-# name-only + ancestor=cabrain:latest filters missed it and it kept serving FlowOS
-# data UNAUTHENTICATED on the NPM upstream. Never remove the deploy webhook
-# (cabrain-deploy / stack-webhook image).
-for c in $(sudo docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}' \
-            | grep -iE 'cabrain' | grep -viE 'cabrain-deploy|stack-webhook' \
-            | cut -d'|' -f1); do
-  echo "removing stale app container: $c"; sudo docker rm -f "$c" 2>/dev/null || true
-done
-sudo -E docker run -d --name cabrain \
+docker rm -f cabrain 2>/dev/null || true
+docker run -d --name cabrain \
   --network stack_stacknet --restart unless-stopped \
-  --env-file /mnt/c/services/cabrain/.env \
+  --env-file /deploy/.env \
   -e DATABASE_URL="postgresql://cabrain:${CABRAIN_PW}@pg:5432/cabrain?search_path=cabrain_auth,public" \
   -e DB_DRIVER=pgx -e CACHE_DRIVER=redis -e REDIS_URL=redis://redis:6379 \
   -e BRAIN_BM25_TOKENIZER=cabrain_ml \
-  -e CABRAIN_REQUIRE_AUTH=1 -e BRAIN_CHAT_LLM_MODEL=qwen2.5:3b-instruct \
   cabrain:latest
-# AUTH_SECRET + CABRAIN_SECRETS_KEY come from --env-file (/mnt/c/services/cabrain/.env);
-# they MUST be set there for login sessions + the secrets vault to survive restarts.
-# CABRAIN_REQUIRE_AUTH=1 makes every /api/brain/* endpoint require a login session
-# (browser) or an X-Cabrain-Token (MCP) — the public URL is no longer open.
+
+# Prune dangling images + build cache older than 24h (safe: only untagged, unrooted layers)
+echo "  --- prune ---"
+docker image prune -f 2>&1 | tail -1
+docker builder prune -f --filter until=24h 2>&1 | tail -1
+
 sleep 5
-sudo -E docker ps --format '{{.Names}} {{.Status}}' | grep -E "^cabrain "
+docker ps --format '{{.Names}} {{.Status}}' | grep -E "^cabrain "
 echo "=== [$(date -Is)] deploy done ==="
