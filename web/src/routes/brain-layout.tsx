@@ -1,5 +1,5 @@
 import { Outlet, useNavigate, useRouterState, Link } from "@tanstack/react-router";
-import { LayoutDashboard, Search, Waypoints, Database, Activity, HelpCircle, KeyRound, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, Search, Waypoints, Database, Activity, HelpCircle, KeyRound, Lock, Users, LogOut } from "lucide-react";
 import {
   SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
   SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuItem, SidebarMenuButton,
@@ -44,6 +44,7 @@ const NAV = [
 
 const ADMIN_NAV = [
   { to: "/permissions", label: "Permissions", icon: KeyRound },
+  { to: "/secrets", label: "Secrets", icon: Lock },
   { to: "/users", label: "Users", icon: Users },
 ];
 

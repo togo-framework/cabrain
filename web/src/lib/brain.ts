@@ -101,6 +101,19 @@ export type Token = {
   grants: Grant[];
 };
 
+// Per-brain secret metadata. The list NEVER carries the decrypted value — `hint`
+// is a masked preview (e.g. "sk-…mnop"); the value is fetched lazily via reveal.
+export type SecretMeta = {
+  namespace: string;
+  name: string;
+  hint: string;
+  kind: string;
+  sourceRef?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type BrainDetail = {
   namespace: string;
   memories: number;
@@ -203,6 +216,19 @@ export const brainApi = {
   // --- Session launcher: mint a scoped token + Claude Code MCP config for a brain ---
   launchSession: (body: { namespace: string; write: boolean; label?: string }) =>
     postJSON<SessionResult & Partial<ApiError>>("/api/brain/session", body),
+
+  // --- Per-brain secrets vault (namespace-scoped) ---
+  // The list is metadata-only (masked `hint`, never values).
+  secrets: (namespace: string) =>
+    getJSON<{ secrets: SecretMeta[] }>(`/api/brain/secrets${qs({ namespace })}`),
+  // Store/update a secret (write/admin).
+  putSecret: (body: { namespace: string; name: string; value: string; kind?: string }) =>
+    postJSON<{ stored: boolean } & Partial<ApiError>>("/api/brain/secrets", body),
+  // Decrypt a single secret — requires write/admin (stricter than read).
+  revealSecret: (body: { namespace: string; name: string }) =>
+    postJSON<{ value: string } & Partial<ApiError>>("/api/brain/secrets/reveal", body),
+  deleteSecret: (body: { namespace: string; name: string }) =>
+    postJSON<{ deleted: boolean } & Partial<ApiError>>("/api/brain/secrets/delete", body),
 };
 
 export type SessionResult = {
@@ -218,8 +244,8 @@ export type SessionResult = {
 // Server-Sent Events from the brain plugin. Named events (name -> data):
 //   retain {namespace,decision} · recall {namespace,count} · search {count}
 //   gap {namespace,query} | {resolved,status} · grant {agentId,namespace}
-//   brain {deleted}
-export type BrainEventName = "retain" | "recall" | "search" | "gap" | "grant" | "brain";
+//   brain {deleted} · secret {namespace,name,op}
+export type BrainEventName = "retain" | "recall" | "search" | "gap" | "grant" | "brain" | "secret";
 
 /**
  * Open the brain SSE stream and dispatch parsed events to `onEvent`. Returns a
@@ -231,7 +257,7 @@ export function subscribeBrainEvents(opts: {
   onOpen?: () => void;
   onError?: () => void;
 }): () => void {
-  const names: BrainEventName[] = ["retain", "recall", "search", "gap", "grant", "brain"];
+  const names: BrainEventName[] = ["retain", "recall", "search", "gap", "grant", "brain", "secret"];
   const es = new EventSource(`${API}/api/brain/events`);
   es.onopen = () => opts.onOpen?.();
   es.onerror = () => opts.onError?.();

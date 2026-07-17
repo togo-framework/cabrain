@@ -20,6 +20,7 @@ const INVALIDATE: Record<BrainEventName, string[][]> = {
   gap: [["brain", "gaps"], ["brain", "stats"]],
   grant: [["brain", "tokens"]],
   brain: [["brain", "namespaces"], ["brain", "stats"], ["brain", "graph"], ["brain", "detail"]],
+  secret: [["brain", "secrets"]],
 };
 
 /**
