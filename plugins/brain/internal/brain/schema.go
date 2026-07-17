@@ -6,7 +6,18 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
 )
+
+// bm25Tokenizer is the pg_tokenizer tokenizer recall/retain use. It is created by
+// infra (the app role cannot), so the name is configurable; the default matches
+// the multilingual tokenizer provisioned on the live cabrain DB.
+func bm25Tokenizer() string {
+	if t := os.Getenv("BRAIN_BM25_TOKENIZER"); t != "" {
+		return t
+	}
+	return "cabrain_bm25_tok"
+}
 
 // ErrBM25Skipped wraps a non-fatal BM25-layer failure during Migrate: the core
 // schema applied, but the vchord_bm25/pg_tokenizer objects could not be created
@@ -79,8 +90,10 @@ func ApplyBM25(ctx context.Context, db *sql.DB) error {
 // the OR filter), so this same query serves before TEI is reachable.
 //
 // Positional args: $1 query embedding (::vector literal), $2 namespace,
-// $3 query text, $4 limit, $5 min importance. Reranking + 1-hop entity expansion
-// happen in Go after this.
+// $3 query text, $4 limit, $5 min importance, $6 bm25 tokenizer name. Reranking +
+// 1-hop entity expansion happen in Go after this. The BM25 index is on the concrete
+// default partition (memories_default_bm25) — see bm25.sql for why the parent index
+// can't be used.
 const recallSQL = `
 WITH vec AS (
   SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS r
@@ -90,11 +103,11 @@ WITH vec AS (
 ),
 txt AS (
   SELECT id, ROW_NUMBER() OVER (
-           ORDER BY content_bm25 <&> to_bm25query('memories_bm25', tokenize($3,'cabrain_ml'))
+           ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3, $6))
          ) AS r
   FROM memories
   WHERE namespace = $2 AND invalid_at IS NULL AND tier = 'hot' AND content_bm25 IS NOT NULL
-  ORDER BY content_bm25 <&> to_bm25query('memories_bm25', tokenize($3,'cabrain_ml'))
+  ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3, $6))
   LIMIT 40
 )
 SELECT m.id, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),

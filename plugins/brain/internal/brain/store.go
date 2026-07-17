@@ -160,7 +160,7 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	// authoritative store, so a tokenizer hiccup must never fail a write (the row
 	// is already committed and recallable by vector). Off the correctness path.
 	_, _ = db.ExecContext(ctx,
-		`UPDATE memories SET content_bm25 = tokenize($2,'cabrain_ml') WHERE id = $1`, id, in.Content)
+		`UPDATE memories SET content_bm25 = tokenize($2,$3) WHERE id = $1`, id, in.Content, bm25Tokenizer())
 	// Invalidate this namespace's L1 recall cache — a new memory can change results.
 	s.bumpEpoch(in.Namespace)
 	s.event(ctx, db, "retain", in.Namespace, in.OwnerAgentID, decision, id, int(time.Since(start).Milliseconds()))
@@ -258,7 +258,7 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	// still works, just without lexical fusion. Pull a wide pool; rerank narrows it.
 	const poolSize = 40
 	vec := vecLit(vecs[0])
-	pool, err := s.recallPool(ctx, db, recallSQL, vec, q.Namespace, q.Query, poolSize, q.MinImportance)
+	pool, err := s.recallPool(ctx, db, recallSQL, vec, q.Namespace, q.Query, poolSize, q.MinImportance, bm25Tokenizer())
 	if err != nil {
 		pool, err = s.recallPool(ctx, db, recallVecSQL, vec, q.Namespace, poolSize, q.MinImportance)
 		if err != nil {

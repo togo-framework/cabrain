@@ -83,8 +83,8 @@ func inspect(ctx context.Context, db *sql.DB) {
 	fmt.Println("── content_bm25 column ──")
 	q(ctx, db, `SELECT column_name, udt_name FROM information_schema.columns
 	            WHERE table_name='memories' AND column_name='content_bm25'`)
-	fmt.Println("── bm25 index ──")
-	q(ctx, db, `SELECT indexname FROM pg_indexes WHERE tablename='memories' AND indexname='memories_bm25'`)
+	fmt.Println("── bm25 index (on partition) ──")
+	q(ctx, db, `SELECT indexname FROM pg_indexes WHERE indexname='memories_default_bm25'`)
 	fmt.Println("── row counts ──")
 	q(ctx, db, `SELECT
 	              (SELECT count(*) FROM memories)                          AS memories,
@@ -97,6 +97,11 @@ func inspect(ctx context.Context, db *sql.DB) {
 // tokenize(), then rank with content_bm25 <&> to_bm25query(...) (lower = better).
 func bm25Test(ctx context.Context, db *sql.DB) {
 	must(brain.ApplyBM25(ctx, db), "apply bm25")
+	tok := os.Getenv("BRAIN_BM25_TOKENIZER")
+	if tok == "" {
+		tok = "cabrain_bm25_tok"
+	}
+	fmt.Printf("using tokenizer %q, index memories_default_bm25\n", tok)
 	const ns = "__bm25_smoke__"
 	_, _ = db.ExecContext(ctx, `DELETE FROM memories WHERE namespace=$1`, ns)
 	rows := []string{
@@ -108,7 +113,7 @@ func bm25Test(ctx context.Context, db *sql.DB) {
 	for _, c := range rows {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO memories (namespace, network, memory_type, content, tier, content_bm25)
-			VALUES ($1,'fact','semantic',$2,'hot', tokenize($2,'cabrain_ml'))`, ns, c)
+			VALUES ($1,'fact','semantic',$2,'hot', tokenize($2,$3))`, ns, c, tok)
 		must(err, "seed insert")
 	}
 	fmt.Printf("✓ seeded %d multilingual rows into %s\n\n", len(rows), ns)
@@ -117,11 +122,11 @@ func bm25Test(ctx context.Context, db *sql.DB) {
 		fmt.Printf("── BM25 query: %q ──\n", query)
 		q(ctx, db, `
 			SELECT left(content,48) AS content,
-			       round((content_bm25 <&> to_bm25query('memories_bm25', tokenize($2,'cabrain_ml')))::numeric, 4) AS score
+			       round((content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($2,$3)))::numeric, 4) AS score
 			FROM memories
 			WHERE namespace=$1 AND content_bm25 IS NOT NULL
-			ORDER BY content_bm25 <&> to_bm25query('memories_bm25', tokenize($2,'cabrain_ml'))
-			LIMIT 4`, ns, query)
+			ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($2,$3))
+			LIMIT 4`, ns, query, tok)
 		fmt.Println()
 	}
 	_, _ = db.ExecContext(ctx, `DELETE FROM memories WHERE namespace=$1`, ns)
