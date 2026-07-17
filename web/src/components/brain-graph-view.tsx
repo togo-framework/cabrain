@@ -1,9 +1,95 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Maximize2, Minus, Plus, X, Link2, FileText, Loader2 } from "lucide-react";
+import { Maximize2, Minus, Plus, X, Link2, FileText, Loader2, Columns3, Network } from "lucide-react";
 import { Badge, Button } from "@togo-framework/ui";
 import { brainApi, type GraphData, type GraphNode } from "../lib/brain";
 import { colorForGroup, compareGroups } from "../lib/brain-colors";
+import { SpiderGraphView } from "./brain-spider-view";
+
+type GraphMode = "schema" | "spider";
+const VIEW_KEY = "brain-graph-view-mode";
+
+function readMode(): GraphMode {
+  if (typeof window === "undefined") return "schema";
+  return window.localStorage.getItem(VIEW_KEY) === "spider" ? "spider" : "schema";
+}
+
+/** Graph explorer shell: a Schema ⇄ Spider view toggle + a shared color legend,
+ * wrapping the columnar "memory schema" and the animated force-directed views.
+ * Both surfaces share `brain-colors` so groups read identically across them. */
+export function BrainGraphView({ data, namespace }: { data: GraphData; namespace: string }) {
+  const [mode, setMode] = useState<GraphMode>(readMode);
+
+  const setModePersist = useCallback((m: GraphMode) => {
+    setMode(m);
+    if (typeof window !== "undefined") window.localStorage.setItem(VIEW_KEY, m);
+  }, []);
+
+  // Shared legend (group → color, with counts) — identical across both views.
+  const legend = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of data.nodes ?? []) {
+      const g = n.group ?? "entity";
+      counts.set(g, (counts.get(g) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => compareGroups(a[0], b[0]))
+      .map(([group, count]) => ({ group, count, color: colorForGroup(group) }));
+  }, [data]);
+
+  const nodeCount = data.nodes?.length ?? 0;
+  const edgeCount = data.edges?.length ?? 0;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Toolbar: view toggle + shared legend + counts */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-2 text-xs">
+        <div className="inline-flex overflow-hidden rounded-lg border border-border bg-background">
+          <button
+            onClick={() => setModePersist("schema")}
+            aria-pressed={mode === "schema"}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 font-medium transition-colors ${
+              mode === "schema" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            title="Columnar memory-schema view"
+          >
+            <Columns3 className="h-3.5 w-3.5" /> Schema
+          </button>
+          <button
+            onClick={() => setModePersist("spider")}
+            aria-pressed={mode === "spider"}
+            className={`inline-flex items-center gap-1.5 border-l border-border px-2.5 py-1 font-medium transition-colors ${
+              mode === "spider" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            title="Animated force-directed spider view"
+          >
+            <Network className="h-3.5 w-3.5" /> Spider
+          </button>
+        </div>
+
+        <span className="h-4 w-px bg-border" aria-hidden />
+
+        {legend.map((l) => (
+          <span key={l.group} className="inline-flex items-center gap-1.5 text-muted-foreground">
+            <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: l.color }} />
+            <span className="capitalize text-foreground/80">{l.group}</span>
+            <span className="tabular-nums opacity-60">{l.count}</span>
+          </span>
+        ))}
+
+        <span className="ml-auto whitespace-nowrap tabular-nums text-muted-foreground">
+          {nodeCount} nodes · {edgeCount} edges
+        </span>
+      </div>
+
+      {mode === "schema" ? (
+        <SchemaGraphView data={data} namespace={namespace} />
+      ) : (
+        <SpiderGraphView data={data} namespace={namespace} />
+      )}
+    </div>
+  );
+}
 
 // ── Layout geometry (world coordinates) ───────────────────────────────────
 const CARD_W = 190;
@@ -31,7 +117,7 @@ function edgePath(a: Placed, b: Placed): string {
   return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
 }
 
-export function BrainGraphView({ data, namespace }: { data: GraphData; namespace: string }) {
+function SchemaGraphView({ data, namespace }: { data: GraphData; namespace: string }) {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 });
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -176,23 +262,8 @@ export function BrainGraphView({ data, namespace }: { data: GraphData; namespace
       .sort((a, b) => compareGroups(a.group ?? "", b.group ?? "") || a.name.localeCompare(b.name));
   }, [focusId, adj, nodeById]);
 
-  // ── Legend (group → color, with counts) ─────────────────────────────────
-  const legend = columns.map((c) => ({ group: c.group, count: c.count, color: colorForGroup(c.group) }));
-
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Legend */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-2 text-xs">
-        {legend.map((l) => (
-          <span key={l.group} className="inline-flex items-center gap-1.5 text-muted-foreground">
-            <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: l.color }} />
-            <span className="capitalize text-foreground/80">{l.group}</span>
-            <span className="tabular-nums opacity-60">{l.count}</span>
-          </span>
-        ))}
-      </div>
-
-      <div className="relative flex min-h-0 flex-1">
+    <div className="relative flex min-h-0 flex-1">
         {/* ── Canvas ── */}
         <div
           ref={viewportRef}
@@ -329,13 +400,12 @@ export function BrainGraphView({ data, namespace }: { data: GraphData; namespace
             onClose={() => setFocusId(null)}
           />
         )}
-      </div>
     </div>
   );
 }
 
 // ── Right detail panel ──────────────────────────────────────────────────────
-function NodeDetail({
+export function NodeDetail({
   node,
   namespace,
   neighbors,
