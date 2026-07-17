@@ -105,7 +105,7 @@ CREATE INDEX IF NOT EXISTS memories_vec
 -- pg_tokenizer 0.1.1 on the live cabrain DB. Applied by bm25.sql (separate, so a
 -- tokenizer-config issue never blocks the core schema), and populated on the retain
 -- path (content_bm25 = tokenize(content, 'cabrain_ml')). Shape:
---   SELECT create_tokenizer('cabrain_ml', $$ pre_tokenizer = "unicode_segmentation" $$);
+--   SELECT create_tokenizer('cabrain_ml', $$ model = "llmlingua2" $$);  -- see infra/grant-bm25.sql (superuser)
 --   ALTER TABLE memories ADD COLUMN content_bm25 bm25vector;   -- populated per-write via tokenize()
 --   CREATE INDEX memories_bm25 ON memories USING bm25 (content_bm25 bm25_ops);
 -- Recall ranks with:  content_bm25 <&> to_bm25query('memories_bm25', tokenize($q,'cabrain_ml'))
