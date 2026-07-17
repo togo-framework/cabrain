@@ -7,26 +7,48 @@ the only reason `retain`/`recall` don't execute from the Coder workspace is that
 network resolves `pg`, `tei-embed`, `tei-rerank`, `cognee`, `minio` by name and lights the
 whole thing up.
 
+> **Where these commands run.** Build + `docker run` happen on the **stack host** (the box
+> that owns `stack_stacknet`), NOT inside the Coder workspace — the workspace has the Docker
+> CLI but no daemon socket (`/var/run/docker.sock` absent), so `docker build`/`run` there fail
+> with *"failed to connect to the docker API … daemon running?"*. Run everything below on the
+> host, or on any machine whose Docker daemon is attached to `stack_stacknet`.
+
 ## 1. Env (on-stacknet, internal names)
 
-Use `/mnt/c/services/cabrain/.env` (the DATABASE_URL there already targets `pg:5432`). The app
-reads these; secrets are never baked into the image:
+Point `--env-file` at the host env file (e.g. `/mnt/c/services/cabrain/.env`, which mirrors the
+workspace's `~/.env.cabrain`); its `CABRAIN_DATABASE_URL` already targets `pg:5432`. Secrets are
+never baked into the image. The columns below are what the **app binary actually reads**
+(confirmed by `grep Getenv`); everything else in the env file is inert for this container.
 
-| Var | On-stacknet value |
-|---|---|
-| `DATABASE_URL` | `postgresql://cabrain:…@pg:5432/cabrain` (from `CABRAIN_DATABASE_URL`) |
-| `TEI_EMBEDDINGS_URL` / `TEI_RERANKER_URL` | `http://tei-embed:80` / `http://tei-rerank:80` |
-| `TEI_EMBEDDINGS_DIM` | `1024` (BAAI/bge-m3) |
-| `COGNEE_API_URL` / `COGNEE_API_TOKEN` | `http://cognee:8000` / … |
-| `COLD_STORE_*` | `http://minio:9000`, bucket `cabrain-cold` |
-| `ADDR` / `WEB_DIST` | `:8080` / `/app/web/dist` (set in the image) |
-| `DB_DRIVER` | `pgx` |
+| Var | On-stacknet value | Notes |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://cabrain:…@pg:5432/cabrain` | **Required.** Mapped from `CABRAIN_DATABASE_URL` (see §2). `togo.yaml` pins `driver: pgx`, so `DB_DRIVER` is optional/redundant. |
+| `TEI_EMBEDDINGS_URL` / `TEI_RERANKER_URL` | `http://tei-embed:80` / `http://tei-rerank:80` | **Required** for retain/recall embeds + rerank. |
+| `TEI_EMBEDDINGS_DIM` | `1024` (BAAI/bge-m3) | **Required**; must match the vector column dim. |
+| `BRAIN_BM25_TOKENIZER` | `cabrain_bm25_tok` (default) → set `cabrain_ml` | Optional. Switch to `cabrain_ml` **after** a superuser runs `infra/grant-bm25.sql` §3 (llmlingua2 multilingual tokenizer). Until then leave unset/default. |
+| `COGNEE_API_URL` | `http://cognee:8000` | Optional. Unset ⇒ cognify engine disabled (non-fatal). |
+| `COGNEE_ADMIN_EMAIL` / `COGNEE_API_TOKEN` | … | Optional. Login creds for the cognify engine (confirm the auth scheme on-stack; workspace probe got 401). |
+| `CACHE_DRIVER` / `REDIS_URL` / `BRAIN_RECALL_CACHE_TTL` | `memory` (default) / — / `30` | Optional L1 recall cache. `memory` (in-process) needs nothing; `redis` needs the cache-redis plugin + `REDIS_URL` (see the Redis section). Redis is **not** on `stack_stacknet` today. |
+| `CABRAIN_AGENT_ID` | `claude-code` | Optional. Session identity for grant checks (MCP/API); empty = trusted context. |
+| `COLD_STORE_*` | `http://minio:9000`, bucket `cabrain-cold` | Phase 2 cold-tier (MinIO). Not yet read by the binary; safe to leave in the file. |
+| `ADDR` / `WEB_DIST` | `:8080` / `/app/web/dist` | **Baked into the image** — do not override. |
 
-## 2. Build + run
+## 2. Build + run (on the host)
 
 ```bash
+# PREREQUISITE — run codegen first. internal/db/gen and internal/graph/gen are
+# gitignored (sqlc/gqlgen output), so a clean clone has no generated code and the
+# Dockerfile's `go build ./cmd/api` fails with "no matching versions for query latest"
+# (it tries to resolve the missing gen packages as modules). Build from a checkout where
+# codegen has run so `COPY . .` includes the gen dirs:
+togo generate            # sqlc → gqlgen → atlas → OpenAPI (populates internal/**/gen)
+
 # from repo root (monorepo — plugins/ must be in the build context)
 docker build -t cabrain:latest .
+
+# Map CABRAIN_DATABASE_URL → DATABASE_URL. --env-file does NOT expand shell vars, so
+# source the file into THIS shell first, then the -e mapping resolves.
+set -a; . /mnt/c/services/cabrain/.env; set +a
 
 docker run -d --name cabrain \
   --network stack_stacknet \
@@ -36,13 +58,19 @@ docker run -d --name cabrain \
   cabrain:latest
 ```
 
-(`--env-file` sets `CABRAIN_DATABASE_URL`; map it to `DATABASE_URL`, or add a `DATABASE_URL`
-line to the env file. `TEI_*`/`COGNEE_*`/`COLD_STORE_*` come straight from the file.)
+The container joins `stack_stacknet`, so `pg`, `tei-embed`, `tei-rerank`, `cognee`, `minio`
+resolve by name. `-e DATABASE_URL=…` is the one required remap (the env file only defines
+`CABRAIN_DATABASE_URL`); `TEI_*`/`COGNEE_*` come straight from the file. To flip on the
+multilingual BM25 tokenizer, add `-e BRAIN_BM25_TOKENIZER=cabrain_ml` **after** the superuser
+step in `infra/grant-bm25.sql`.
 
-## 3. Public entry
+## 3. Public entry (host/admin action — do not automate)
 
 Point **NPM `proxy_host id=28`** (`cabrain.fadymondy.com`, currently a Cognee placeholder) at
-the `cabrain` container on port **8080**. HTTP-only, matching the existing chain.
+`Forward Hostname/IP = cabrain`, `Forward Port = 8080` (HTTP-only, scheme `http`, matching the
+existing chain — the NPM container is on `stack_stacknet`, so it resolves the `cabrain`
+container by name). This is a Nginx Proxy Manager admin change; make it in the NPM UI/API — it
+is intentionally left manual here.
 
 ## 4. Verify
 
