@@ -206,9 +206,12 @@ function AddSecretModal({ namespace, onClose }: { namespace: string; onClose: ()
 }
 
 /** Secrets vault — per-brain, namespace-scoped. Values are encrypted at rest and
- * are only ever fetched on an explicit Reveal (which needs write access). */
-export function BrainSecrets() {
-  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces });
+ * are only ever fetched on an explicit Reveal (which needs write access). When
+ * `namespace` is supplied (brain workspace) it locks to that brain and hides the
+ * brain selector; standalone it auto-selects the richest brain. */
+export function BrainSecrets({ namespace }: { namespace?: string } = {}) {
+  const scoped = !!namespace;
+  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces, enabled: !scoped });
   const brains = namespaces.data?.brains ?? [];
 
   // Auto-select the richest brain (most memories) once namespaces load.
@@ -216,8 +219,9 @@ export function BrainSecrets() {
     () => [...brains].sort((a, b) => b.memories - a.memories)[0]?.namespace ?? "",
     [brains],
   );
-  const [ns, setNs] = useState("");
-  useEffect(() => { if (!ns && richest) setNs(richest); }, [richest, ns]);
+  const [nsState, setNsState] = useState("");
+  useEffect(() => { if (!scoped && !nsState && richest) setNsState(richest); }, [richest, nsState, scoped]);
+  const ns = scoped ? namespace! : nsState;
 
   const [adding, setAdding] = useState(false);
 
@@ -237,18 +241,20 @@ export function BrainSecrets() {
             Secrets are encrypted at rest and auto-captured from retained content; revealing requires write access.
           </p>
         </div>
-        <select
-          value={ns}
-          onChange={(e) => setNs(e.target.value)}
-          className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-        >
-          {brains.length === 0 && <option value="">No brains</option>}
-          {brains.map((b) => (
-            <option key={b.namespace} value={b.namespace}>
-              {b.namespace} ({b.memories.toLocaleString()})
-            </option>
-          ))}
-        </select>
+        {!scoped && (
+          <select
+            value={ns}
+            onChange={(e) => setNsState(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+          >
+            {brains.length === 0 && <option value="">No brains</option>}
+            {brains.map((b) => (
+              <option key={b.namespace} value={b.namespace}>
+                {b.namespace} ({b.memories.toLocaleString()})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="rounded-xl border border-border bg-card">

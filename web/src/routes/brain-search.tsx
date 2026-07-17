@@ -103,13 +103,17 @@ function ResultRow({ r, onSaved }: { r: Recalled; onSaved: (content: string) => 
   );
 }
 
-export function BrainSearch() {
+/** Search surface. When `namespace` is supplied (rendered inside a brain
+ * workspace) it locks to that single brain and hides the cross-brain picker;
+ * otherwise it's the global cross-brain search engine. */
+export function BrainSearch({ namespace }: { namespace?: string } = {}) {
+  const scoped = !!namespace;
   const [q, setQ] = useState("");
-  // Selected brains; empty set = ALL brains (the default).
+  // Selected brains; empty set = ALL brains (the default). Ignored when scoped.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [state, setState] = useState<{ results?: Recalled[]; error?: string; ran?: boolean }>({});
 
-  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces });
+  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces, enabled: !scoped });
   const brains = namespaces.data?.brains ?? [];
 
   const toggle = (ns: string) =>
@@ -123,7 +127,7 @@ export function BrainSearch() {
     mutationFn: () =>
       brainApi.search({
         query: q.trim(),
-        namespaces: selected.size ? [...selected] : undefined,
+        namespaces: scoped ? [namespace!] : selected.size ? [...selected] : undefined,
         limit: 20,
       }),
     onSuccess: (r) => {
@@ -146,9 +150,13 @@ export function BrainSearch() {
       <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-indigo-500/10 via-violet-500/5 to-teal-400/10 p-6">
         <SynapseField className="opacity-40" />
         <div className="relative">
-          <h1 className="text-2xl font-semibold text-foreground">Search across every brain</h1>
+          <h1 className="text-2xl font-semibold text-foreground">
+            {scoped ? "Search this brain" : "Search across every brain"}
+          </h1>
           <p className="mb-4 text-sm text-muted-foreground">
-            Hybrid recall — dense vector + BM25 (RRF) + rerank — over all brains at once, or scope to a few.
+            {scoped
+              ? <>Hybrid recall — dense vector + BM25 (RRF) + rerank — scoped to <span className="font-medium text-foreground">{namespace}</span>.</>
+              : "Hybrid recall — dense vector + BM25 (RRF) + rerank — over all brains at once, or scope to a few."}
           </p>
 
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -172,7 +180,8 @@ export function BrainSearch() {
             </button>
           </div>
 
-          {/* Brain multi-select */}
+          {/* Brain multi-select — hidden when locked to a single brain workspace. */}
+          {!scoped && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               onClick={() => setSelected(new Set())}
@@ -203,6 +212,7 @@ export function BrainSearch() {
               );
             })}
           </div>
+          )}
         </div>
       </div>
 
@@ -212,7 +222,7 @@ export function BrainSearch() {
 
       {state.ran && !search.isPending && (state.results?.length ?? 0) > 0 && (
         <div className="text-xs text-muted-foreground">
-          {state.results!.length} result{state.results!.length === 1 ? "" : "s"} · {allActive ? "all brains" : [...selected].join(", ")}
+          {state.results!.length} result{state.results!.length === 1 ? "" : "s"} · {scoped ? namespace : allActive ? "all brains" : [...selected].join(", ")}
         </div>
       )}
       {state.ran && !search.isPending && state.results && state.results.length === 0 && !state.error && (

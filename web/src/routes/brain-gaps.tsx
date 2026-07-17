@@ -56,12 +56,16 @@ function GapRow({ g, onResolve, busy }: { g: Gap; onResolve: (s: GapStatus) => v
   );
 }
 
-export function BrainGaps() {
+/** Knowledge gaps. When `namespace` is supplied (brain workspace) it locks to
+ * that brain and hides the brain selector, keeping the status filter. */
+export function BrainGaps({ namespace }: { namespace?: string } = {}) {
+  const scoped = !!namespace;
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>(""); // "" = all
-  const [nsFilter, setNsFilter] = useState<string>("");
+  const [nsState, setNsState] = useState<string>("");
+  const nsFilter = scoped ? namespace! : nsState;
 
-  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces });
+  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces, enabled: !scoped });
   // Fetch with server filters when set; the "" default returns open+indexed, so to
   // get dismissed too we ask per status when "all" is selected.
   const gaps = useQuery({
@@ -115,13 +119,15 @@ export function BrainGaps() {
             <option value="">All statuses</option>
             {ORDER.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
           </select>
-          <select
-            value={nsFilter} onChange={(e) => setNsFilter(e.target.value)}
-            className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-primary"
-          >
-            <option value="">All brains</option>
-            {brains.map((b) => <option key={b.namespace} value={b.namespace}>{b.namespace}</option>)}
-          </select>
+          {!scoped && (
+            <select
+              value={nsFilter} onChange={(e) => setNsState(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+            >
+              <option value="">All brains</option>
+              {brains.map((b) => <option key={b.namespace} value={b.namespace}>{b.namespace}</option>)}
+            </select>
+          )}
         </div>
       </div>
 
