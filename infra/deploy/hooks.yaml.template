@@ -1,0 +1,16 @@
+# CaBrain webhook receiver (adnanh/webhook). Rendered with the shared secret from
+# /home/fadymondy/services/cabrain-deploy/.webhook-secret at install time.
+- id: cabrain-deploy
+  execute-command: /home/fadymondy/services/cabrain-src/infra/deploy/deploy.sh
+  command-working-directory: /home/fadymondy/services/cabrain-deploy
+  response-message: "cabrain-deploy triggered"
+  trigger-rule:
+    and:
+      - match:
+          type: payload-hmac-sha256
+          secret: "@@WEBHOOK_SECRET@@"
+          parameter: { source: header, name: X-Hub-Signature-256 }
+      - match:
+          type: value
+          value: refs/heads/main
+          parameter: { source: payload, name: ref }
