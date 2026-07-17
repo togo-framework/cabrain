@@ -34,8 +34,12 @@ const protocolVersion = "2024-11-05"
 
 func main() {
 	base := env("CABRAIN_API_URL", "http://localhost:8080")
-	agent := os.Getenv("CABRAIN_AGENT_ID")
-	srv := &server{base: strings.TrimRight(base, "/"), agent: agent, hc: &http.Client{Timeout: 30 * time.Second}}
+	srv := &server{
+		base:  strings.TrimRight(base, "/"),
+		agent: os.Getenv("CABRAIN_AGENT_ID"),
+		token: os.Getenv("CABRAIN_TOKEN"), // ACL token → per-brain read/write
+		hc:    &http.Client{Timeout: 30 * time.Second},
+	}
 	srv.serve(os.Stdin, os.Stdout)
 }
 
@@ -70,6 +74,7 @@ type rpcError struct {
 type server struct {
 	base  string
 	agent string
+	token string
 	hc    *http.Client
 	out   *json.Encoder
 }
@@ -208,6 +213,22 @@ func (s *server) callTool(req *rpcReq) {
 	case "brain_delete":
 		body, code, err = s.post("/api/brain/brain/delete", map[string]any{
 			"namespace": args["namespace"], "confirm": args["confirm"]})
+	case "brain_grant":
+		body, code, err = s.post("/api/brain/grant", map[string]any{
+			"agentId": args["agentId"], "namespace": args["namespace"],
+			"canRead": args["canRead"], "canWrite": args["canWrite"]})
+	case "brain_revoke_grant":
+		body, code, err = s.post("/api/brain/grant/revoke", map[string]any{
+			"agentId": args["agentId"], "namespace": args["namespace"]})
+	case "brain_create_token":
+		body, code, err = s.post("/api/brain/tokens", map[string]any{
+			"agentId": args["agentId"], "label": args["label"], "isAdmin": args["isAdmin"]})
+	case "brain_tokens":
+		qv := url.Values{}
+		if b, _ := args["includeRevoked"].(bool); b {
+			qv.Set("includeRevoked", "1")
+		}
+		body, code, err = s.get("/api/brain/tokens", qv)
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return
@@ -262,6 +283,9 @@ func (s *server) get(path string, q url.Values) (any, int, error) {
 func (s *server) do(req *http.Request) (any, int, error) {
 	if s.agent != "" {
 		req.Header.Set("X-Agent-Id", s.agent)
+	}
+	if s.token != "" {
+		req.Header.Set("X-Cabrain-Token", s.token) // ACL: per-brain read/write
 	}
 	resp, err := s.hc.Do(req)
 	if err != nil {

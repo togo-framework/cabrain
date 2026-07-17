@@ -130,4 +130,38 @@ var toolDefs = []map[string]any{
 			"confirm":   prop{"type": "string", "description": "must equal namespace to proceed"},
 		}, "namespace", "confirm"),
 	},
+	{
+		"name":        "brain_grant",
+		"description": "ACL (admin): grant an agent/token read and/or write access to a brain. Upserts the grant.",
+		"inputSchema": obj(prop{
+			"agentId":   prop{"type": "string", "description": "the agent identity the token maps to"},
+			"namespace": prop{"type": "string", "description": "the brain to grant"},
+			"canRead":   prop{"type": "boolean", "default": true},
+			"canWrite":  prop{"type": "boolean", "default": false},
+		}, "agentId", "namespace"),
+	},
+	{
+		"name":        "brain_revoke_grant",
+		"description": "ACL (admin): remove an agent's access to a brain.",
+		"inputSchema": obj(prop{
+			"agentId":   prop{"type": "string"},
+			"namespace": prop{"type": "string"},
+		}, "agentId", "namespace"),
+	},
+	{
+		"name":        "brain_create_token",
+		"description": "ACL (admin): mint an access token for an agent identity (optionally admin). Grant it brains with brain_grant; the holder sets CABRAIN_TOKEN.",
+		"inputSchema": obj(prop{
+			"agentId": prop{"type": "string"},
+			"label":   prop{"type": "string"},
+			"isAdmin": prop{"type": "boolean", "default": false},
+		}, "agentId"),
+	},
+	{
+		"name":        "brain_tokens",
+		"description": "ACL (admin): list access tokens with their per-brain grants.",
+		"inputSchema": obj(prop{
+			"includeRevoked": prop{"type": "boolean", "default": false},
+		}),
+	},
 }

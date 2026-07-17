@@ -180,3 +180,18 @@ CREATE TABLE IF NOT EXISTS memory_gaps (
   CONSTRAINT memory_gaps_status_chk CHECK (status IN ('open','indexed','dismissed'))
 );
 CREATE INDEX IF NOT EXISTS memory_gaps_status ON memory_gaps (status, last_seen DESC);
+
+-- Access tokens (ACL). A token identifies a caller (agent_id); its brain access is
+-- namespace_grants(agent_id, namespace, can_read, can_write). Admin tokens bypass
+-- grants. Presented over MCP/REST as the X-Cabrain-Token header. Enforcement is on
+-- when CABRAIN_REQUIRE_TOKEN=1 (else a tokenless caller is the trusted local console).
+CREATE TABLE IF NOT EXISTS brain_tokens (
+  token        text PRIMARY KEY,
+  agent_id     text NOT NULL,
+  label        text,
+  is_admin     boolean NOT NULL DEFAULT false,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  last_used_at timestamptz,
+  revoked_at   timestamptz
+);
+CREATE INDEX IF NOT EXISTS brain_tokens_agent ON brain_tokens (agent_id);

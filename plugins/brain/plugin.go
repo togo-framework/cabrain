@@ -40,6 +40,12 @@ func init() {
 		k.Router.Post("/api/brain/import", svc.Import)
 		k.Router.Post("/api/brain/brain/delete", svc.DeleteBrain)
 		k.Router.Post("/api/brain/memory/edit", svc.EditMemory)
+		// ACL: access tokens + per-brain grants (admin-only management).
+		k.Router.Get("/api/brain/tokens", svc.ListTokens)
+		k.Router.Post("/api/brain/tokens", svc.CreateToken)
+		k.Router.Post("/api/brain/tokens/revoke", svc.RevokeToken)
+		k.Router.Post("/api/brain/grant", svc.GrantBrain)
+		k.Router.Post("/api/brain/grant/revoke", svc.RevokeGrant)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name)

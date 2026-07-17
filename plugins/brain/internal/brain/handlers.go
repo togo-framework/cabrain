@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 )
 
@@ -54,6 +55,10 @@ func (s *Service) Recall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace and query are required"))
 		return
 	}
+	if !s.canRead(r, q.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no read access to brain "+q.Namespace))
+		return
+	}
 	res, err := s.Store.Recall(r.Context(), q)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
@@ -72,6 +77,26 @@ func (s *Service) Search(w http.ResponseWriter, r *http.Request) {
 	if q.Query == "" {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "query is required"))
 		return
+	}
+	// Scope a non-admin caller's search to the brains they can read.
+	if c := s.identify(r); !c.admin {
+		cand := q.Namespaces
+		if len(cand) == 0 {
+			for _, b := range mustNamespaces(s, r) {
+				cand = append(cand, b)
+			}
+		}
+		allowed := []string{}
+		for _, ns := range cand {
+			if s.canRead(r, ns) {
+				allowed = append(allowed, ns)
+			}
+		}
+		if len(allowed) == 0 {
+			writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no readable brains for this token"))
+			return
+		}
+		q.Namespaces = allowed
 	}
 	res, err := s.Store.SearchAll(r.Context(), q)
 	if err != nil {
@@ -92,6 +117,10 @@ func (s *Service) Retain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace and content are required"))
 		return
 	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
 	res, err := s.Store.Retain(r.Context(), in)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
@@ -102,13 +131,61 @@ func (s *Service) Retain(w http.ResponseWriter, r *http.Request) {
 
 // agentID reads the MCP/session identity from a trusted header. Empty = the
 // server/console context (grant checks bypassed; namespace scoping still applies).
+// caller is the resolved identity of a request.
+type caller struct {
+	agent string
+	admin bool // admin bypasses grants
+	valid bool // a presented token resolved (or no token needed)
+}
+
+// identify resolves the caller from the X-Cabrain-Token header (preferred) or the
+// X-Agent-Id header. A tokenless request is the trusted local console UNLESS
+// CABRAIN_REQUIRE_TOKEN=1. An invalid token resolves to no access.
+func (s *Service) identify(r *http.Request) caller {
+	if tok := r.Header.Get("X-Cabrain-Token"); tok != "" {
+		if agent, admin, ok := s.Store.ResolveToken(r.Context(), tok); ok {
+			return caller{agent: agent, admin: admin, valid: true}
+		}
+		return caller{valid: false} // bad/revoked token → deny
+	}
+	agent := r.Header.Get("X-Agent-Id")
+	if agent == "" && os.Getenv("CABRAIN_REQUIRE_TOKEN") != "1" {
+		return caller{admin: true, valid: true} // trusted local console
+	}
+	return caller{agent: agent, valid: agent != "" || os.Getenv("CABRAIN_REQUIRE_TOKEN") != "1"}
+}
+
+func (s *Service) canRead(r *http.Request, ns string) bool {
+	c := s.identify(r)
+	if c.admin {
+		return true
+	}
+	if !c.valid || c.agent == "" {
+		return false
+	}
+	ok, _ := s.Store.CanRead(r.Context(), c.agent, ns)
+	return ok
+}
+
+func (s *Service) canWrite(r *http.Request, ns string) bool {
+	c := s.identify(r)
+	if c.admin {
+		return true
+	}
+	if !c.valid || c.agent == "" {
+		return false
+	}
+	ok, _ := s.Store.CanWrite(r.Context(), c.agent, ns)
+	return ok
+}
+
 func agentID(r *http.Request) string { return r.Header.Get("X-Agent-Id") }
 
 // GET /api/brain/memory?namespace=&id=   (memory_get)
 func (s *Service) Get(w http.ResponseWriter, r *http.Request) {
 	ns, id := r.URL.Query().Get("namespace"), r.URL.Query().Get("id")
-	if ok, err := s.Store.CanRead(r.Context(), agentID(r), ns); err == nil && !ok {
-		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no read grant for namespace"))
+	if !s.canRead(r, ns) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no read access to brain "+ns))
 		return
 	}
 	m, err := s.Store.Get(r.Context(), ns, id)
@@ -126,7 +203,7 @@ func (s *Service) Forget(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
 		return
 	}
-	if ok, err := s.Store.CanWrite(r.Context(), agentID(r), in.Namespace); err == nil && !ok {
+	if !s.canWrite(r, in.Namespace) {
 		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write grant for namespace"))
 		return
 	}
@@ -151,7 +228,7 @@ func (s *Service) Share(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Caller must already hold a grant on the namespace (bootstrap seeded out-of-band).
-	if ok, err := s.Store.CanWrite(r.Context(), agentID(r), in.Namespace); err == nil && !ok {
+	if !s.canWrite(r, in.Namespace) {
 		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "caller has no grant on namespace"))
 		return
 	}
@@ -234,6 +311,10 @@ func (s *Service) DeleteBrain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "set confirm = namespace to delete"))
 		return
 	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
 	n, err := s.Store.DeleteBrain(r.Context(), in.Namespace)
 	if err != nil {
 		writeErr(w, err)
@@ -255,11 +336,128 @@ func (s *Service) EditMemory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
 		return
 	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
 	if err := s.Store.EditMemory(r.Context(), in.Namespace, in.ID, in.Content, in.Importance, in.Metadata); err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "updated": true})
+}
+
+func mustNamespaces(s *Service, r *http.Request) []string {
+	ns, _ := s.Store.Namespaces(r.Context())
+	out := make([]string, 0, len(ns))
+	for _, b := range ns {
+		out = append(out, b.Namespace)
+	}
+	return out
+}
+
+// --- ACL management (admin-only) ---------------------------------------------
+
+func (s *Service) adminOnly(r *http.Request) bool { return s.identify(r).admin }
+
+// POST /api/brain/tokens  { agentId, label, isAdmin }
+func (s *Service) CreateToken(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOnly(r) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "admin only"))
+		return
+	}
+	var in struct {
+		AgentID string `json:"agentId"`
+		Label   string `json:"label"`
+		IsAdmin bool   `json:"isAdmin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	t, err := s.Store.CreateToken(r.Context(), in.AgentID, in.Label, in.IsAdmin)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// GET /api/brain/tokens?includeRevoked=
+func (s *Service) ListTokens(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOnly(r) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "admin only"))
+		return
+	}
+	toks, _ := s.Store.ListTokens(r.Context(), r.URL.Query().Get("includeRevoked") == "1")
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": toks})
+}
+
+// POST /api/brain/tokens/revoke  { token }
+func (s *Service) RevokeToken(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOnly(r) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "admin only"))
+		return
+	}
+	var in struct{ Token string }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if err := s.Store.RevokeToken(r.Context(), in.Token); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": true})
+}
+
+// POST /api/brain/grant  { agentId, namespace, canRead, canWrite }   (admin)
+func (s *Service) GrantBrain(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOnly(r) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "admin only"))
+		return
+	}
+	var in struct {
+		AgentID   string `json:"agentId"`
+		Namespace string `json:"namespace"`
+		CanRead   *bool  `json:"canRead"`
+		CanWrite  *bool  `json:"canWrite"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	cr, cw := true, false
+	if in.CanRead != nil {
+		cr = *in.CanRead
+	}
+	if in.CanWrite != nil {
+		cw = *in.CanWrite
+	}
+	g, err := s.Store.Share(r.Context(), in.Namespace, in.AgentID, cr, cw)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, g)
+}
+
+// POST /api/brain/grant/revoke  { agentId, namespace }   (admin)
+func (s *Service) RevokeGrant(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOnly(r) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "admin only"))
+		return
+	}
+	var in struct{ AgentID, Namespace string }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if err := s.Store.RevokeGrant(r.Context(), in.AgentID, in.Namespace); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": true})
 }
 
 func apiErr(code, msg string) map[string]any {
