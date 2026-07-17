@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS memory_events (
   latency_ms int,
   metadata   jsonb NOT NULL DEFAULT '{}',
   CONSTRAINT memory_events_op_chk
-    CHECK (op IN ('retain','recall','recall_archive','reflect','forget','reconsolidate','demote','share'))
+    CHECK (op IN ('retain','recall','recall_archive','reflect','forget','reconsolidate','demote','share','search'))
 );
 CREATE INDEX IF NOT EXISTS memory_events_ns_ts ON memory_events (namespace, ts DESC);
 

@@ -25,6 +25,7 @@ func init() {
 		k.Router.Get("/api/brain/namespaces", svc.Namespaces)
 		k.Router.Get("/api/brain/graph", svc.Graph)
 		k.Router.Post("/api/brain/recall", svc.Recall)
+		k.Router.Post("/api/brain/search", svc.Search) // cross-brain search engine
 		k.Router.Post("/api/brain/retain", svc.Retain)
 		// Point-lookup + lifecycle (SPEC §5.1) — pure SQL, work before brain-tei.
 		k.Router.Get("/api/brain/memory", svc.Get)

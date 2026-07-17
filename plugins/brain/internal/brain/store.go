@@ -228,6 +228,7 @@ type RecallQuery struct {
 
 type Recalled struct {
 	ID         string    `json:"id"`
+	Namespace  string    `json:"namespace,omitempty"` // set by cross-brain SearchAll
 	Content    string    `json:"content"`
 	Score      float64   `json:"score"`
 	Network    string    `json:"network"`

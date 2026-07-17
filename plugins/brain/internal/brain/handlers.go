@@ -62,6 +62,25 @@ func (s *Service) Recall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": res})
 }
 
+// POST /api/brain/search  { query, namespaces?, limit }  (cross-brain search engine)
+func (s *Service) Search(w http.ResponseWriter, r *http.Request) {
+	var q SearchQuery
+	if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if q.Query == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "query is required"))
+		return
+	}
+	res, err := s.Store.SearchAll(r.Context(), q)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": res})
+}
+
 // POST /api/brain/retain  { namespace, content, sourceKind, ... }
 func (s *Service) Retain(w http.ResponseWriter, r *http.Request) {
 	var in MemoryInput
