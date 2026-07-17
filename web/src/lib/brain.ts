@@ -192,6 +192,19 @@ export const brainApi = {
     postJSON<Grant & Partial<ApiError>>("/api/brain/grant", body),
   revokeGrant: (body: { agentId: string; namespace: string }) =>
     postJSON<{ revoked: boolean } & Partial<ApiError>>("/api/brain/grant/revoke", body),
+
+  // --- Session launcher: mint a scoped token + Claude Code MCP config for a brain ---
+  launchSession: (body: { namespace: string; write: boolean; label?: string }) =>
+    postJSON<SessionResult & Partial<ApiError>>("/api/brain/session", body),
+};
+
+export type SessionResult = {
+  agentId: string;
+  namespace: string;
+  write: boolean;
+  token: string;
+  mcpConfig: { mcpServers: Record<string, { command: string; env: Record<string, string> }> };
+  howto: string;
 };
 
 // --- Realtime -------------------------------------------------------------
