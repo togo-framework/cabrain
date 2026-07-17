@@ -1,25 +1,6 @@
 import { useMemo, useState } from "react";
 import type { GraphData, GraphNode } from "../lib/brain";
-
-// Stable palette for entity `group` (typename) coloring — same hues family the
-// dashboard uses for actor dots, so the console reads as one system.
-const PALETTE = [
-  "#6366f1", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6",
-  "#ef4444", "#10b981", "#3b82f6", "#f97316", "#06b6d4",
-  "#a855f7", "#84cc16", "#e11d48", "#0ea5e9", "#d946ef",
-];
-
-function hueFor(key: string): string {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
-}
-
-function colorFor(group: string | undefined): string {
-  if (group === "root") return "#f43f5e"; // rose — the brain core
-  if (group === "type") return "#94a3b8"; // slate — the type spine
-  return hueFor(group ?? "entity");
-}
+import { colorForGroup as colorFor, compareGroups } from "../lib/brain-colors";
 
 type Placed = GraphNode & { x: number; y: number; r: number };
 
@@ -96,13 +77,17 @@ export function BrainMindmap({ data, height = 560 }: { data: GraphData; height?:
 
   const dim = (id: string) => (neighbors && !neighbors.has(id) ? 0.12 : 1);
 
-  // color legend from the type groups present on entities
+  // color legend from the type groups present on entities (group → color, counts)
   const legend = useMemo(() => {
-    const groups = new Set<string>();
+    const counts = new Map<string, number>();
     for (const n of data.nodes ?? []) {
-      if (n.group && n.group !== "root" && n.group !== "type") groups.add(n.group);
+      if (n.group && n.group !== "root" && n.group !== "type") {
+        counts.set(n.group, (counts.get(n.group) ?? 0) + 1);
+      }
     }
-    return [...groups].sort();
+    return [...counts.entries()]
+      .sort((a, b) => compareGroups(a[0], b[0]))
+      .map(([group, count]) => ({ group, count }));
   }, [data]);
 
   const hovered = hover ? pos.get(hover) : null;
@@ -160,10 +145,11 @@ export function BrainMindmap({ data, height = 560 }: { data: GraphData; height?:
 
       {legend.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 px-1 text-xs text-muted-foreground">
-          {legend.map((g) => (
-            <span key={g} className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: colorFor(g) }} />
-              {g}
+          {legend.map((l) => (
+            <span key={l.group} className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: colorFor(l.group) }} />
+              <span className="capitalize">{l.group}</span>
+              <span className="tabular-nums opacity-60">{l.count}</span>
             </span>
           ))}
         </div>

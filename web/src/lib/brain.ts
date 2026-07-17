@@ -36,6 +36,21 @@ export type GraphData = {
   edges: GraphEdge[];
 };
 
+// A full memory row, as returned by GET /api/brain/memory?namespace&id.
+export type Memory = {
+  id: string;
+  namespace: string;
+  content: string;
+  network?: string;
+  memoryType?: string;
+  sourceKind?: string;
+  sourceRef?: string;
+  importance?: number;
+  visibility?: string;
+  validAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type Recalled = {
   id: string;
   content: string;
@@ -128,6 +143,10 @@ export const brainApi = {
   namespaces: () => getJSON<{ brains: NamespaceInfo[] }>("/api/brain/namespaces"),
   graph: (namespace = "", limit = 200) =>
     getJSON<GraphData>(`/api/brain/graph${qs({ namespace, limit })}`),
+  // Full memory row for a graph entity node (strip the `ent:` prefix off the
+  // node id to get the bare UUID before calling this).
+  getMemory: (namespace: string, id: string) =>
+    getJSON<Memory & Partial<ApiError>>(`/api/brain/memory${qs({ namespace, id })}`),
   recall: (body: { namespace: string; query: string; limit?: number }) =>
     postJSON<{ results?: Recalled[] } & Partial<ApiError>>("/api/brain/recall", body),
 
