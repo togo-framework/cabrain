@@ -80,4 +80,23 @@ var toolDefs = []map[string]any{
 			"can_write":        prop{"type": "boolean", "default": false},
 		}, "namespace", "grantee_agent_id"),
 	},
+	{
+		"name": "memory_gaps",
+		"description": "List knowledge gaps — questions the brain couldn't answer (recall came back empty), " +
+			"deduped and counted. See what's missing, then index it (memory_retain) and memory_resolve_gap.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string", "description": "optional scope filter"},
+			"status":    prop{"type": "string", "enum": []string{"open", "indexed", "dismissed", "all"}, "description": "default: open+indexed"},
+			"limit":     prop{"type": "integer", "description": "default 100"},
+		}),
+	},
+	{
+		"name":        "memory_resolve_gap",
+		"description": "Resolve a knowledge gap after indexing the missing knowledge (status=indexed) or to drop it (dismissed).",
+		"inputSchema": obj(prop{
+			"id":         prop{"type": "integer", "description": "the gap id from memory_gaps"},
+			"status":     prop{"type": "string", "enum": []string{"indexed", "dismissed", "open"}},
+			"resolution": prop{"type": "string", "description": "optional note"},
+		}, "id", "status"),
+	},
 }

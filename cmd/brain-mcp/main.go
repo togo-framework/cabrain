@@ -182,6 +182,21 @@ func (s *server) callTool(req *rpcReq) {
 			"canRead":        args["can_read"],
 			"canWrite":       args["can_write"],
 		})
+	case "memory_gaps":
+		qv := url.Values{}
+		if v := str(args["namespace"]); v != "" {
+			qv.Set("namespace", v)
+		}
+		if v := str(args["status"]); v != "" {
+			qv.Set("status", v)
+		}
+		if v := str(args["limit"]); v != "" {
+			qv.Set("limit", v)
+		}
+		body, code, err = s.get("/api/brain/gaps", qv)
+	case "memory_resolve_gap":
+		body, code, err = s.post("/api/brain/gaps/resolve", map[string]any{
+			"id": args["id"], "status": args["status"], "resolution": args["resolution"]})
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return

@@ -30,6 +30,15 @@ func init() {
 		k.Router.Get("/api/brain/memory", svc.Get)
 		k.Router.Post("/api/brain/forget", svc.Forget)
 		k.Router.Post("/api/brain/share", svc.Share)
+		// Knowledge gaps (missed questions → actionable index).
+		k.Router.Get("/api/brain/gaps", svc.Gaps)
+		k.Router.Post("/api/brain/gaps/resolve", svc.ResolveGap)
+		// Brain administration: details, export/import (portability), delete, edit.
+		k.Router.Get("/api/brain/brain", svc.BrainDetail)
+		k.Router.Get("/api/brain/export", svc.Export)
+		k.Router.Post("/api/brain/import", svc.Import)
+		k.Router.Post("/api/brain/brain/delete", svc.DeleteBrain)
+		k.Router.Post("/api/brain/memory/edit", svc.EditMemory)
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name)

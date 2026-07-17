@@ -28,6 +28,7 @@ type Stats struct {
 	Agents      int  `json:"agents"`      // distinct owner agents
 	Sessions24h int  `json:"sessions24h"` // distinct source_ref, last 24h
 	Recalls24h  int  `json:"recalls24h"`  // recall events, last 24h
+	OpenGaps    int  `json:"openGaps"`    // missed questions awaiting indexing
 }
 
 func (s *Store) Stats(ctx context.Context) (*Stats, error) {
@@ -49,6 +50,7 @@ func (s *Store) Stats(ctx context.Context) (*Stats, error) {
 	scan(`SELECT COUNT(DISTINCT owner_agent_id) FROM memories WHERE owner_agent_id IS NOT NULL`, &st.Agents)
 	scan(`SELECT COUNT(DISTINCT source_ref) FROM memories WHERE source_ref IS NOT NULL AND valid_at > now() - interval '24 hours'`, &st.Sessions24h)
 	scan(`SELECT COUNT(*) FROM memory_events WHERE op='recall' AND ts > now() - interval '24 hours'`, &st.Recalls24h)
+	scan(`SELECT COUNT(*) FROM memory_gaps WHERE status='open'`, &st.OpenGaps)
 	return st, nil
 }
 
@@ -121,17 +123,19 @@ func (s *Store) Namespaces(ctx context.Context) ([]NamespaceInfo, error) {
 
 // Graph — the mindmap / Graph Explorer subgraph.
 type GraphNode struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Group string `json:"group,omitempty"` // for coloring: root | type | <type>
 }
 type GraphEdge struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 }
 type GraphData struct {
-	Ready bool        `json:"ready"`
-	Nodes []GraphNode `json:"nodes"`
-	Edges []GraphEdge `json:"edges"`
+	Ready   bool        `json:"ready"`
+	Derived bool        `json:"derived"` // true = built from memory metadata (Cognee graph absent)
+	Nodes   []GraphNode `json:"nodes"`
+	Edges   []GraphEdge `json:"edges"`
 }
 
 func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphData, error) {
@@ -144,14 +148,23 @@ func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphD
 		return g, nil
 	}
 	g.Ready = true
+
+	// Use the Cognee-populated entity graph when it exists; otherwise derive a
+	// browsable mindmap from memory metadata (namespace → type → sample entities).
+	var entCount int
+	_ = db.QueryRowContext(ctx,
+		`SELECT count(*) FROM entities WHERE ($1='' OR namespace=$1)`, namespace).Scan(&entCount)
+	if entCount == 0 {
+		return s.derivedGraph(ctx, db, namespace, limit)
+	}
+
 	nq := `SELECT id::text, name FROM entities`
 	args := []any{}
 	if namespace != "" {
 		nq += ` WHERE namespace = $1`
 		args = append(args, namespace)
 	}
-	nq += ` LIMIT ` // limit appended below via fmt-free positional
-	rows, err := db.QueryContext(ctx, nq+itoa(limit), args...)
+	rows, err := db.QueryContext(ctx, nq+` LIMIT `+itoa(limit), args...)
 	if err != nil {
 		return g, nil
 	}
@@ -175,6 +188,83 @@ func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphD
 				g.Edges = append(g.Edges, e)
 			}
 		}
+	}
+	return g, nil
+}
+
+// derivedGraph builds a hierarchical mindmap from memory metadata:
+// namespace (root) → memory type → up to N sample entities per type.
+func (s *Store) derivedGraph(ctx context.Context, db *sql.DB, namespace string, limit int) (*GraphData, error) {
+	g := &GraphData{Ready: true, Derived: true, Nodes: []GraphNode{}, Edges: []GraphEdge{}}
+	if namespace == "" {
+		// no scope → show namespaces as the first level
+		g.Nodes = append(g.Nodes, GraphNode{ID: "root", Name: "brain", Group: "root"})
+		rows, err := db.QueryContext(ctx, `
+			SELECT namespace, count(*) FROM memories WHERE invalid_at IS NULL
+			GROUP BY namespace ORDER BY 2 DESC LIMIT 30`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var ns string
+				var c int
+				if rows.Scan(&ns, &c) == nil {
+					g.Nodes = append(g.Nodes, GraphNode{ID: "ns:" + ns, Name: ns + " (" + itoa(c) + ")", Group: "type"})
+					g.Edges = append(g.Edges, GraphEdge{Source: "root", Target: "ns:" + ns})
+				}
+			}
+		}
+		return g, nil
+	}
+
+	g.Nodes = append(g.Nodes, GraphNode{ID: "root", Name: namespace, Group: "root"})
+	// level 1: types
+	trows, err := db.QueryContext(ctx, `
+		SELECT COALESCE(NULLIF(metadata->>'type',''),'item') AS t, count(*)
+		FROM memories WHERE namespace=$1 AND invalid_at IS NULL
+		GROUP BY 1 ORDER BY 2 DESC LIMIT 24`, namespace)
+	if err != nil {
+		return g, nil
+	}
+	types := []string{}
+	defer trows.Close()
+	for trows.Next() {
+		var t string
+		var c int
+		if trows.Scan(&t, &c) == nil {
+			g.Nodes = append(g.Nodes, GraphNode{ID: "type:" + t, Name: t + " (" + itoa(c) + ")", Group: "type"})
+			g.Edges = append(g.Edges, GraphEdge{Source: "root", Target: "type:" + t})
+			types = append(types, t)
+		}
+	}
+	if len(types) == 0 {
+		return g, nil
+	}
+	perType := limit / len(types)
+	if perType < 4 {
+		perType = 4
+	}
+	if perType > 20 {
+		perType = 20
+	}
+	// level 2: sample entities per type
+	for _, t := range types {
+		erows, err := db.QueryContext(ctx, `
+			SELECT id::text,
+			       left(regexp_replace(COALESCE(NULLIF(metadata->>'slug',''), NULLIF(metadata->>'path',''), content),'\s+',' ','g'), 48) AS name
+			FROM memories
+			WHERE namespace=$1 AND invalid_at IS NULL AND COALESCE(NULLIF(metadata->>'type',''),'item')=$2
+			LIMIT `+itoa(perType), namespace, t)
+		if err != nil {
+			continue
+		}
+		for erows.Next() {
+			var id, name string
+			if erows.Scan(&id, &name) == nil {
+				g.Nodes = append(g.Nodes, GraphNode{ID: "ent:" + id, Name: name, Group: t})
+				g.Edges = append(g.Edges, GraphEdge{Source: "type:" + t, Target: "ent:" + id})
+			}
+		}
+		erows.Close()
 	}
 	return g, nil
 }

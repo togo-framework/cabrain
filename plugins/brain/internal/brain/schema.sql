@@ -162,3 +162,21 @@ CREATE TABLE IF NOT EXISTS namespace_grants (
   can_write boolean NOT NULL DEFAULT true,
   PRIMARY KEY (agent_id, namespace)
 );
+
+-- Knowledge gaps: every recall that comes back EMPTY is a question the brain
+-- couldn't answer. We record it (deduped, counted) so the operator can act on it —
+-- index the missing knowledge — over MCP / chat / the dashboard.
+CREATE TABLE IF NOT EXISTS memory_gaps (
+  id          bigserial PRIMARY KEY,
+  namespace   text NOT NULL,
+  query       text NOT NULL,                 -- the original query text
+  norm_query  text NOT NULL,                 -- normalized, for dedup
+  hits        int  NOT NULL DEFAULT 1,        -- how many times it's been asked
+  status      text NOT NULL DEFAULT 'open',   -- open | indexed | dismissed
+  resolution  text,                           -- note when resolved
+  first_seen  timestamptz NOT NULL DEFAULT now(),
+  last_seen   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (namespace, norm_query),
+  CONSTRAINT memory_gaps_status_chk CHECK (status IN ('open','indexed','dismissed'))
+);
+CREATE INDEX IF NOT EXISTS memory_gaps_status ON memory_gaps (status, last_seen DESC);

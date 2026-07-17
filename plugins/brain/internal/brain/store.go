@@ -3,6 +3,7 @@ package brain
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -10,6 +11,18 @@ import (
 
 	"github.com/togo-framework/togo"
 )
+
+// metaJSON marshals a metadata map to a JSON string for the jsonb column (nil → NULL).
+func metaJSON(m map[string]any) any {
+	if len(m) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
 
 // ErrNoEmbedder is returned when a path needs embeddings but no Embedder driver
 // (brain-tei) is registered.
@@ -76,6 +89,7 @@ type MemoryInput struct {
 	Visibility     string  // private|team|global ("" → private)
 	ImportanceHint float64 // optional caller salience flag, blended, not authoritative
 	OwnerAgentID   string
+	Metadata       map[string]any // free-form; stored as jsonb (type, slug, tags, …)
 }
 
 type RetainResult struct {
@@ -139,11 +153,12 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO memories
 		  (namespace, owner_agent_id, visibility, network, memory_type, content,
-		   source_kind, source_ref, embedding, importance, tier)
-		VALUES ($1,$2,$3,'experience','episodic',$4,$5,$6,$7::vector,$8,'hot')
+		   source_kind, source_ref, embedding, importance, tier, metadata)
+		VALUES ($1,$2,$3,'experience','episodic',$4,$5,$6,$7::vector,$8,'hot',
+		        COALESCE($9::jsonb,'{}'::jsonb))
 		RETURNING id`,
 		in.Namespace, nullStr(in.OwnerAgentID), vis, in.Content,
-		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp,
+		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp, metaJSON(in.Metadata),
 	).Scan(&id)
 	if err != nil {
 		return nil, errors.New("brain.Retain: insert: " + err.Error())
@@ -297,6 +312,8 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	outcome := "hit"
 	if len(pool) == 0 {
 		outcome = "empty"
+		// A miss: record it as a knowledge gap the operator can index later.
+		s.recordGap(ctx, db, q.Namespace, q.Query)
 	}
 	// Populate L1 for subsequent identical recalls (best-effort; TTL-bounded).
 	s.putCachedRecall(ckey, pool)

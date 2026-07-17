@@ -151,6 +151,98 @@ func (s *Service) Share(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, g)
 }
 
+// GET /api/brain/gaps?namespace=&status=&limit=   (knowledge gaps / missed questions)
+func (s *Service) Gaps(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	gaps, _ := s.Store.Gaps(r.Context(), r.URL.Query().Get("namespace"), r.URL.Query().Get("status"), limit)
+	writeJSON(w, http.StatusOK, map[string]any{"gaps": gaps})
+}
+
+// POST /api/brain/gaps/resolve  { id, status, resolution }
+func (s *Service) ResolveGap(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID         int64  `json:"id"`
+		Status     string `json:"status"`
+		Resolution string `json:"resolution"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if err := s.Store.ResolveGap(r.Context(), in.ID, in.Status, in.Resolution); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "status": in.Status})
+}
+
+// GET /api/brain/brain?namespace=   (brain details)
+func (s *Service) BrainDetail(w http.ResponseWriter, r *http.Request) {
+	d, _ := s.Store.BrainDetail(r.Context(), r.URL.Query().Get("namespace"))
+	writeJSON(w, http.StatusOK, d)
+}
+
+// GET /api/brain/export?namespace=   (portable NDJSON)
+func (s *Service) Export(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace required"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"cabrain-"+ns+".ndjson\"")
+	_, _ = s.Store.Export(r.Context(), ns, w)
+}
+
+// POST /api/brain/import?namespace=   (body = NDJSON export; namespace overrides)
+func (s *Service) Import(w http.ResponseWriter, r *http.Request) {
+	n, err := s.Store.Import(r.Context(), r.URL.Query().Get("namespace"), r.Body)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"imported": n})
+}
+
+// POST /api/brain/brain/delete  { namespace, confirm }  (confirm must equal namespace)
+func (s *Service) DeleteBrain(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Namespace, Confirm string }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" || in.Confirm != in.Namespace {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "set confirm = namespace to delete"))
+		return
+	}
+	n, err := s.Store.DeleteBrain(r.Context(), in.Namespace)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": in.Namespace, "deleted": n})
+}
+
+// POST /api/brain/memory/edit  { namespace, id, content?, importance?, metadata? }
+func (s *Service) EditMemory(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Namespace  string         `json:"namespace"`
+		ID         string         `json:"id"`
+		Content    string         `json:"content"`
+		Importance float64        `json:"importance"`
+		Metadata   map[string]any `json:"metadata"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if err := s.Store.EditMemory(r.Context(), in.Namespace, in.ID, in.Content, in.Importance, in.Metadata); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "updated": true})
+}
+
 func apiErr(code, msg string) map[string]any {
 	return map[string]any{"error": map[string]string{"code": code, "message": msg}}
 }
