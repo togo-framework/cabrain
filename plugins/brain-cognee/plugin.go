@@ -29,14 +29,14 @@ func init() {
 		if k.Log != nil {
 			opts = append(opts, cognee.WithWarnFunc(k.Log.Warn))
 		}
-		// Cognee's auth scheme is deployment-specific; default is a Bearer token.
-		if h := os.Getenv("COGNEE_AUTH_HEADER"); h != "" {
-			opts = append(opts, cognee.WithAuthHeader(h, os.Getenv("COGNEE_AUTH_PREFIX")))
-		}
-		c := cognee.New(base, os.Getenv("COGNEE_API_TOKEN"), opts...)
+		// Cognee (fastapi-users) authenticates via a login form (email + password)
+		// that returns a JWT; the client logs in lazily and caches it.
+		email := os.Getenv("COGNEE_ADMIN_EMAIL")
+		password := os.Getenv("COGNEE_API_TOKEN")
+		c := cognee.New(base, email, password, opts...)
 		brain.RegisterEngine(k, c)
 		if k.Log != nil {
-			k.Log.Info("plugin active", "plugin", Name, "cognee", base)
+			k.Log.Info("plugin active", "plugin", Name, "cognee", base, "user", email)
 		}
 		return nil
 	})

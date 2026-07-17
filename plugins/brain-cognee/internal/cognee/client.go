@@ -23,42 +23,42 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
-// Client talks to a Cognee instance. It is safe for concurrent use.
+// Client talks to a Cognee instance. It is safe for concurrent use. Cognee gates
+// its API behind fastapi-users: authenticate with POST /auth/login (form
+// username+password) to get a JWT, then send it as a Bearer token. The JWT is
+// cached and refreshed on a 401.
 type Client struct {
-	base       string
-	token      string
-	authHeader string // e.g. "Authorization"; value is authPrefix+token
-	authPrefix string // e.g. "Bearer "
-	hc         *http.Client
-	warn       func(msg string, args ...any)
+	base     string
+	email    string
+	password string
+	hc       *http.Client
+	warn     func(msg string, args ...any)
+
+	mu  sync.Mutex
+	jwt string
 }
 
 // Option configures the client.
 type Option func(*Client)
-
-// WithAuthHeader overrides the auth header name + value prefix (default
-// "Authorization" / "Bearer "). Some Cognee deployments use "X-Api-Key" / "".
-func WithAuthHeader(name, prefix string) Option {
-	return func(c *Client) { c.authHeader, c.authPrefix = name, prefix }
-}
 
 // WithWarnFunc wires a logger for best-effort warnings.
 func WithWarnFunc(f func(msg string, args ...any)) Option {
 	return func(c *Client) { c.warn = f }
 }
 
-// New builds a Cognee client. base is the API root (…:8000), token the bearer/api key.
-func New(base, token string, opts ...Option) *Client {
+// New builds a Cognee client. base is the API root (…:8000); email/password are the
+// admin login (COGNEE_ADMIN_EMAIL / COGNEE_API_TOKEN).
+func New(base, email, password string, opts ...Option) *Client {
 	c := &Client{
-		base:       strings.TrimRight(base, "/"),
-		token:      token,
-		authHeader: "Authorization",
-		authPrefix: "Bearer ",
-		hc:         &http.Client{Timeout: 30 * time.Second},
-		warn:       func(string, ...any) {},
+		base:     strings.TrimRight(base, "/"),
+		email:    email,
+		password: password,
+		hc:       &http.Client{Timeout: 60 * time.Second},
+		warn:     func(string, ...any) {},
 	}
 	for _, o := range opts {
 		o(c)
@@ -156,10 +156,52 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // --- transport ----------------------------------------------------------------
 
-func (c *Client) auth(req *http.Request) {
-	if c.token != "" {
-		req.Header.Set(c.authHeader, c.authPrefix+c.token)
+// token returns a cached JWT, logging in on first use.
+func (c *Client) token(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	j := c.jwt
+	c.mu.Unlock()
+	if j != "" {
+		return j, nil
 	}
+	j, err := c.login(ctx)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	c.jwt = j
+	c.mu.Unlock()
+	return j, nil
+}
+
+// login exchanges the admin email/password for a JWT (fastapi-users login form).
+func (c *Client) login(ctx context.Context) (string, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("username", c.email)
+	_ = mw.WriteField("password", c.password)
+	_ = mw.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/api/v1/auth/login", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("cognee login: HTTP %d: %s", resp.StatusCode, truncate(string(b), 160))
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil || out.AccessToken == "" {
+		return "", fmt.Errorf("cognee login: no access_token in response")
+	}
+	return out.AccessToken, nil
 }
 
 // send fires a request and discards the body, erroring on non-2xx.
@@ -168,20 +210,49 @@ func (c *Client) send(req *http.Request) error {
 	return err
 }
 
-// recv fires a request and returns the body, erroring on non-2xx.
+// recv fires a request with the JWT and returns the body; on a 401 it drops the
+// cached token, re-logs-in, and retries once (the request body is replayed via
+// GetBody, which http.NewRequest sets for bytes/strings bodies).
 func (c *Client) recv(req *http.Request) ([]byte, error) {
-	c.auth(req)
-	resp, err := c.hc.Do(req)
+	b, code, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
+	if code == http.StatusUnauthorized {
+		c.mu.Lock()
+		c.jwt = ""
+		c.mu.Unlock()
+		if req.GetBody != nil {
+			if body, e := req.GetBody(); e == nil {
+				req.Body = body
+			}
+		}
+		b, code, err = c.do(req)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if code >= 300 {
 		return b, fmt.Errorf("cognee %s %s: HTTP %d: %s",
-			req.Method, req.URL.Path, resp.StatusCode, truncate(string(b), 200))
+			req.Method, req.URL.Path, code, truncate(string(b), 200))
 	}
 	return b, nil
+}
+
+// do sets a fresh Bearer token and executes the request.
+func (c *Client) do(req *http.Request) ([]byte, int, error) {
+	tok, err := c.token(req.Context())
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return b, resp.StatusCode, nil
 }
 
 func truncate(s string, n int) string {
