@@ -11,6 +11,13 @@
     "togo-web": {
       "type": "http",
       "url": "https://mcp.to-go.dev/mcp"
+    },
+    "cabrain": {
+      "command": "/home/coder/go/bin/brain-mcp",
+      "env": {
+        "CABRAIN_API_URL": "http://localhost:8080",
+        "CABRAIN_AGENT_ID": "claude-code"
+      }
     }
   }
 }
