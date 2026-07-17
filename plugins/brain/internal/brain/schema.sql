@@ -195,3 +195,25 @@ CREATE TABLE IF NOT EXISTS brain_tokens (
   revoked_at   timestamptz
 );
 CREATE INDEX IF NOT EXISTS brain_tokens_agent ON brain_tokens (agent_id);
+
+-- Per-brain secrets vault. Secrets found while retaining (API keys, passwords,
+-- .env values, connection strings, private keys) are moved OUT of memories.content
+-- into here, encrypted (AES-256-GCM; nonce||ciphertext in value_enc), and the
+-- content is redacted to a `[secret:<name>]` reference so raw values never enter
+-- the vector index or a recall response. Reveal is ACL-gated (write/admin on the
+-- brain). Namespace-scoped like every other brain object. On the live instance this
+-- table resolves under the isolated `cabrain_auth` schema via search_path.
+CREATE TABLE IF NOT EXISTS secrets (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  namespace   text NOT NULL,
+  name        text NOT NULL,
+  value_enc   bytea NOT NULL,                 -- AES-256-GCM (nonce||ciphertext)
+  hint        text,                           -- non-reversible masked preview
+  kind        text,                           -- api_key|password|env|token|private_key|connection_string|credential
+  source_ref  text,                           -- memory id / session that introduced it
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (namespace, name)
+);
+CREATE INDEX IF NOT EXISTS secrets_ns ON secrets (namespace, name);

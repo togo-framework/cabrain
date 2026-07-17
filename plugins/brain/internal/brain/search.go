@@ -27,11 +27,11 @@ WITH vec AS (
 ),
 txt AS (
   SELECT id, ROW_NUMBER() OVER (
-           ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3,$5))
+           ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3::text,$5::text))
          ) AS r
   FROM memories
   WHERE ($2='' OR namespace = ANY(string_to_array($2,','))) AND invalid_at IS NULL AND tier='hot' AND content_bm25 IS NOT NULL
-  ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3,$5))
+  ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3::text,$5::text))
   LIMIT 60
 )
 SELECT m.id, m.namespace, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),
@@ -43,14 +43,16 @@ LEFT JOIN txt ON txt.id = m.id
 WHERE (vec.id IS NOT NULL OR txt.id IS NOT NULL)
 ORDER BY score DESC LIMIT $4;`
 
-// searchVecSQL is the vector-only fallback (BM25 layer absent).
+// searchVecSQL is the vector-only fallback (BM25 layer absent). It takes exactly
+// three params ($1 vec, $2 namespaces, $3 limit) — every one referenced, so PG
+// never hits "could not determine data type of parameter" on an unused arg.
 const searchVecSQL = `
 SELECT id, namespace, content, network, memory_type, COALESCE(source_kind,''),
        COALESCE(source_ref,''), importance, valid_at,
        (1 - (embedding <=> $1::vector)) + 0.15*importance AS score
 FROM memories
 WHERE ($2='' OR namespace = ANY(string_to_array($2,','))) AND invalid_at IS NULL AND tier='hot' AND embedding IS NOT NULL
-ORDER BY embedding <=> $1::vector LIMIT $4;`
+ORDER BY embedding <=> $1::vector LIMIT $3;`
 
 // SearchAll runs a hybrid search across brains, reranks the merged pool, and
 // returns results tagged with their namespace. Unlike Recall it is not scoped to a
@@ -78,7 +80,7 @@ func (s *Store) SearchAll(ctx context.Context, q SearchQuery) ([]Recalled, error
 
 	rows, err := db.QueryContext(ctx, searchSQL, vec, nsList, q.Query, pool, bm25Tokenizer())
 	if err != nil {
-		rows, err = db.QueryContext(ctx, searchVecSQL, vec, nsList, q.Query, pool)
+		rows, err = db.QueryContext(ctx, searchVecSQL, vec, nsList, q.Limit)
 		if err != nil {
 			return nil, errors.New("brain.Search: query: " + err.Error())
 		}

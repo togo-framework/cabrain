@@ -365,6 +365,103 @@ func (s *Service) EditMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "updated": true})
 }
 
+// --- Per-brain secrets vault -------------------------------------------------
+
+// GET /api/brain/secrets?namespace=   → metadata only (names + masked hints), canRead.
+func (s *Service) SecretsList(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace required"))
+		return
+	}
+	if !s.canRead(r, ns) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no access to brain "+ns))
+		return
+	}
+	items, err := s.Store.ListSecrets(r.Context(), ns)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if items == nil {
+		items = []SecretMeta{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"secrets": items})
+}
+
+// POST /api/brain/secrets  { namespace, name, value, kind? }  → store/update, canWrite.
+func (s *Service) SecretPut(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Namespace, Name, Value, Kind string
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" || in.Name == "" || in.Value == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace, name, value required"))
+		return
+	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
+	if in.Kind == "" {
+		in.Kind = "generic"
+	}
+	if err := s.Store.PutSecret(r.Context(), in.Namespace, sanitizeSecretName(in.Name), in.Value, in.Kind, "console", s.identify(r).agent); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("secret", map[string]any{"namespace": in.Namespace, "name": in.Name, "op": "put"})
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": in.Namespace, "name": in.Name, "stored": true})
+}
+
+// POST /api/brain/secrets/reveal  { namespace, name }  → decrypted value.
+// Stricter than read: requires write/admin on the brain (revealing a raw secret).
+func (s *Service) SecretReveal(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Namespace, Name string }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" || in.Name == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace and name required"))
+		return
+	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "revealing a secret needs write/admin on brain "+in.Namespace))
+		return
+	}
+	val, err := s.Store.RevealSecret(r.Context(), in.Namespace, in.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("secret", map[string]any{"namespace": in.Namespace, "name": in.Name, "op": "reveal"})
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": in.Namespace, "name": in.Name, "value": val})
+}
+
+// POST /api/brain/secrets/delete  { namespace, name }  → delete, canWrite.
+func (s *Service) SecretDelete(w http.ResponseWriter, r *http.Request) {
+	var in struct{ Namespace, Name string }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
+	ok, err := s.Store.DeleteSecret(r.Context(), in.Namespace, in.Name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("secret", map[string]any{"namespace": in.Namespace, "name": in.Name, "op": "delete"})
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": in.Namespace, "name": in.Name, "deleted": ok})
+}
+
 func mustNamespaces(s *Service, r *http.Request) []string {
 	ns, _ := s.Store.Namespaces(r.Context())
 	out := make([]string, 0, len(ns))

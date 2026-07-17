@@ -115,6 +115,19 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 		return nil, err
 	}
 	start := time.Now()
+	// Secrets-first: move any API keys / passwords / .env values / connection
+	// strings / private keys OUT of the content into the per-brain vault, and keep
+	// only the redacted `[secret:<name>]` reference. This runs BEFORE embedding so a
+	// raw secret never enters the vector index or a recall response. Best-effort —
+	// on any vault error the original content is kept unchanged (nothing dropped).
+	if red, names := s.captureSecrets(ctx, in.Namespace, in.Content, in.SourceRef, in.OwnerAgentID); len(names) > 0 {
+		in.Content = red
+		if in.Metadata == nil {
+			in.Metadata = map[string]any{}
+		}
+		in.Metadata["hasSecrets"] = true
+		in.Metadata["secrets"] = names
+	}
 	vecs, err := emb.Embed(ctx, []string{in.Content})
 	if err != nil || len(vecs) == 0 {
 		return nil, errors.New("brain.Retain: embed failed: " + errStr(err))

@@ -101,6 +101,11 @@ func init() {
 		k.Router.Post("/api/brain/grant/revoke", gate(svc.RevokeGrant))
 		// Session launcher: mint a scoped token + Claude Code config for a brain.
 		k.Router.Post("/api/brain/session", gate(svc.Session))
+		// Per-brain secrets vault (encrypted; reveal/write are console-gated + ACL).
+		k.Router.Get("/api/brain/secrets", svc.SecretsList)
+		k.Router.Post("/api/brain/secrets", gate(svc.SecretPut))
+		k.Router.Post("/api/brain/secrets/reveal", gate(svc.SecretReveal))
+		k.Router.Post("/api/brain/secrets/delete", gate(svc.SecretDelete))
 		k.Set(Name, svc)
 		if k.Log != nil {
 			k.Log.Info("plugin active", "plugin", Name, "consoleAuth", authRequired())

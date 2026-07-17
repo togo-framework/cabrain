@@ -103,11 +103,11 @@ WITH vec AS (
 ),
 txt AS (
   SELECT id, ROW_NUMBER() OVER (
-           ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3, $6))
+           ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3::text, $6::text))
          ) AS r
   FROM memories
   WHERE namespace = $2 AND invalid_at IS NULL AND tier = 'hot' AND content_bm25 IS NOT NULL
-  ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3, $6))
+  ORDER BY content_bm25 <&> to_bm25query('memories_default_bm25', tokenize($3::text, $6::text))
   LIMIT 40
 )
 SELECT m.id, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),

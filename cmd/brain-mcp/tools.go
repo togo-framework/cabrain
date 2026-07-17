@@ -164,4 +164,37 @@ var toolDefs = []map[string]any{
 			"includeRevoked": prop{"type": "boolean", "default": false},
 		}),
 	},
+	{
+		"name":        "secret_list",
+		"description": "Secrets vault: list secret names + masked hints for a brain (NO values). Needs read on the brain.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+		}, "namespace"),
+	},
+	{
+		"name":        "secret_store",
+		"description": "Secrets vault: store/update an encrypted secret under a name for a brain. Needs write on the brain. Secrets found in retained content are ALSO auto-captured + redacted; use this for explicit stores.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"name":      prop{"type": "string"},
+			"value":     prop{"type": "string"},
+			"kind":      prop{"type": "string", "description": "api_key|password|env|token|private_key|connection_string|generic"},
+		}, "namespace", "name", "value"),
+	},
+	{
+		"name":        "secret_reveal",
+		"description": "Secrets vault: decrypt and return a secret's value. Requires WRITE/admin on the brain (stricter than read). Use to recover a key between sessions.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"name":      prop{"type": "string"},
+		}, "namespace", "name"),
+	},
+	{
+		"name":        "secret_delete",
+		"description": "Secrets vault: delete a secret from a brain. Needs write on the brain.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"name":      prop{"type": "string"},
+		}, "namespace", "name"),
+	},
 }

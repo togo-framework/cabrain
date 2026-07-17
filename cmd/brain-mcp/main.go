@@ -237,6 +237,17 @@ func (s *server) callTool(req *rpcReq) {
 			qv.Set("includeRevoked", "1")
 		}
 		body, code, err = s.get("/api/brain/tokens", qv)
+	case "secret_list":
+		body, code, err = s.get("/api/brain/secrets", url.Values{"namespace": {str(args["namespace"])}})
+	case "secret_store":
+		body, code, err = s.post("/api/brain/secrets", map[string]any{
+			"namespace": args["namespace"], "name": args["name"], "value": args["value"], "kind": args["kind"]})
+	case "secret_reveal":
+		body, code, err = s.post("/api/brain/secrets/reveal", map[string]any{
+			"namespace": args["namespace"], "name": args["name"]})
+	case "secret_delete":
+		body, code, err = s.post("/api/brain/secrets/delete", map[string]any{
+			"namespace": args["namespace"], "name": args["name"]})
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return
