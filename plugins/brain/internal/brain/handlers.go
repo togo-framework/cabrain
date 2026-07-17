@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func randHex(n int) string {
@@ -682,6 +684,163 @@ func (s *Service) Session(w http.ResponseWriter, r *http.Request) {
 			"it recalls/retains against brain '" + in.Namespace + "' by default, with " +
 			map[bool]string{true: "read+write", false: "read-only"}[in.Write] + " access.",
 	})
+}
+
+// --- Data sources (connectors) -----------------------------------------------
+
+// GET /api/brain/datasources?namespace=   → list a brain's configured sources. canRead.
+func (s *Service) Datasources(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace required"))
+		return
+	}
+	if !s.canRead(r, ns) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no read access to brain "+ns))
+		return
+	}
+	items, err := s.Store.ListDatasources(r.Context(), ns)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if items == nil {
+		items = []Datasource{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"datasources": items, "kinds": ConnectorKinds()})
+}
+
+// POST /api/brain/datasources  { namespace, kind, name, config }  → create. canWrite.
+func (s *Service) CreateDatasource(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Namespace string         `json:"namespace"`
+		Kind      string         `json:"kind"`
+		Name      string         `json:"name"`
+		Config    map[string]any `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.Namespace == "" || in.Kind == "" || in.Name == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace, kind, name required"))
+		return
+	}
+	if !s.canWrite(r, in.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+in.Namespace))
+		return
+	}
+	ds, err := s.Store.CreateDatasource(r.Context(), in.Namespace, in.Kind, in.Name, in.Config)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	redactDatasourceSecrets(ds)
+	s.hub.publish("datasource", map[string]any{"namespace": in.Namespace, "op": "create", "id": ds.ID, "kind": ds.Kind})
+	writeJSON(w, http.StatusOK, ds)
+}
+
+// POST /api/brain/datasources/sync  { id }  → run the connector, retain its docs. canWrite.
+func (s *Service) SyncDatasource(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.ID == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "id required"))
+		return
+	}
+	ds, err := s.Store.getDatasource(r.Context(), in.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !s.canWrite(r, ds.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+ds.Namespace))
+		return
+	}
+	res, err := s.Store.SyncDatasource(r.Context(), in.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("datasource", map[string]any{"namespace": ds.Namespace, "op": "sync", "id": in.ID, "ingested": res.Ingested, "status": res.Status})
+	writeJSON(w, http.StatusOK, res)
+}
+
+// POST /api/brain/datasources/delete  { id }  → remove a source. canWrite.
+func (s *Service) DeleteDatasource(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if in.ID == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "id required"))
+		return
+	}
+	ds, err := s.Store.getDatasource(r.Context(), in.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !s.canWrite(r, ds.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+ds.Namespace))
+		return
+	}
+	ok, err := s.Store.DeleteDatasource(r.Context(), in.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("datasource", map[string]any{"namespace": ds.Namespace, "op": "delete", "id": in.ID})
+	writeJSON(w, http.StatusOK, map[string]any{"id": in.ID, "deleted": ok})
+}
+
+// POST /api/brain/ingest/{id}  → PUSH path for webhook datasources. NOT gated by the
+// normal ACL: it authenticates via the X-Webhook-Secret header matched against the
+// datasource's stored config.secret. Body { content, sourceRef?, metadata? }.
+func (s *Service) IngestWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "id required"))
+		return
+	}
+	secret, ns, err := s.Store.webhookSecret(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	presented := r.Header.Get("X-Webhook-Secret")
+	if secret == "" || presented != secret {
+		writeJSON(w, http.StatusUnauthorized, apiErr("unauthenticated", "invalid or missing X-Webhook-Secret"))
+		return
+	}
+	var in struct {
+		Content   string         `json:"content"`
+		SourceRef string         `json:"sourceRef"`
+		Metadata  map[string]any `json:"metadata"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if strings.TrimSpace(in.Content) == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "content required"))
+		return
+	}
+	n, err := s.Store.IngestWebhook(r.Context(), id, in.Content, in.SourceRef, in.Metadata)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.hub.publish("datasource", map[string]any{"namespace": ns, "op": "ingest", "id": id, "ingested": n})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "ingested": n})
 }
 
 func apiErr(code, msg string) map[string]any {

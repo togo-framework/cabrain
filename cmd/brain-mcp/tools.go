@@ -206,4 +206,38 @@ var toolDefs = []map[string]any{
 			"name":      prop{"type": "string"},
 		}, "namespace", "name"),
 	},
+	{
+		"name": "datasource_list",
+		"description": "Data sources: list a brain's configured connectors (text/markdown/crawler/github/sql/webhook) " +
+			"with status, doc counts and last sync. Needs read on the brain.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+		}, "namespace"),
+	},
+	{
+		"name": "datasource_create",
+		"description": "Data sources: add a connector to a brain. kind ∈ text|markdown|crawler|github|sql|webhook. " +
+			"config is per-kind JSON (text:{content,title}, crawler:{url}, github:{repo,branch,path,ext,token}, " +
+			"sql:{driver,dsn,query,refColumn,titleColumn}, webhook: a shared secret is auto-generated). Needs write.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"kind":      prop{"type": "string", "enum": []string{"text", "markdown", "crawler", "github", "sql", "webhook"}},
+			"name":      prop{"type": "string"},
+			"config":    prop{"type": "object", "description": "per-kind connector config"},
+		}, "namespace", "kind", "name"),
+	},
+	{
+		"name":        "datasource_sync",
+		"description": "Data sources: run a connector now — Fetch its documents, chunk and retain them into the brain. Returns ingested count. Webhook sources are push-only (cannot be synced). Needs write.",
+		"inputSchema": obj(prop{
+			"id": prop{"type": "string", "description": "datasource id from datasource_list"},
+		}, "id"),
+	},
+	{
+		"name":        "datasource_delete",
+		"description": "Data sources: delete a connector from a brain (its already-ingested memories stay). Needs write.",
+		"inputSchema": obj(prop{
+			"id": prop{"type": "string", "description": "datasource id from datasource_list"},
+		}, "id"),
+	},
 }

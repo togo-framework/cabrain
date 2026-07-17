@@ -217,3 +217,35 @@ CREATE TABLE IF NOT EXISTS secrets (
   UNIQUE (namespace, name)
 );
 CREATE INDEX IF NOT EXISTS secrets_ns ON secrets (namespace, name);
+
+-- Data sources (connectors). A configured connector instance bound to a brain
+-- (namespace). On sync the connector's Fetch() emits Documents which are chunked
+-- and retained (same §4.1 write-decision as any retain). Built-in kinds: text,
+-- markdown, crawler, github, sql, plus the push-only "webhook". config is free-form
+-- per-kind JSON (url/repo/dsn/query/… and, for webhook, a shared `secret`). Secrets
+-- inside config are redacted on read (see redactDatasourceSecrets).
+--
+-- SCHEMA PLACEMENT: pinned to `public` (same schema as `memories`), NOT bare. On the
+-- live instance the app runs with search_path=cabrain_auth,public, and an UNQUALIFIED
+-- `CREATE TABLE IF NOT EXISTS datasources` would land in cabrain_auth (first writable
+-- schema in the path — that is exactly where `secrets` ended up). Worse, if a
+-- public.datasources already exists, an unqualified IF NOT EXISTS still creates a
+-- SECOND, empty cabrain_auth.datasources that then SHADOWS public in every unqualified
+-- read (verified empirically). Pinning to public keeps datasources alongside memories
+-- and makes this file idempotent under brainctl migrate regardless of search_path. The
+-- app's own unqualified queries (ListDatasources, …) resolve to public since
+-- cabrain_auth has no datasources table.
+CREATE TABLE IF NOT EXISTS public.datasources (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  namespace    text NOT NULL,
+  kind         text NOT NULL,                 -- text|markdown|crawler|github|sql|webhook
+  name         text NOT NULL,
+  config       jsonb NOT NULL DEFAULT '{}',
+  status       text NOT NULL DEFAULT 'idle',  -- idle|syncing|ok|error
+  cursor       text,                          -- incremental resume point
+  last_error   text,
+  doc_count    int NOT NULL DEFAULT 0,
+  last_sync_at timestamptz,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS datasources_ns ON public.datasources (namespace);
