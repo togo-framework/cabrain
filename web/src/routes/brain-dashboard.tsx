@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { brainApi, type ActivityItem, type Gap, type GapStatus, type Recalled } from "../lib/brain";
 import { BrainMindmap } from "../components/brain-mindmap";
+import { SynapseField } from "../components/neural";
 
 function greeting() {
   const h = new Date().getHours();
@@ -19,12 +20,14 @@ function Metric({ label, value, loading, icon: Icon, tone }: { label: string; va
   const zero = !loading && value === 0;
   const warn = tone === "warn" && !zero;
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="relative overflow-hidden rounded-xl border border-border bg-card p-4">
+      {/* soft synapse accent — a faint indigo→teal wash in the corner */}
+      <div className="pointer-events-none absolute -right-6 -top-8 h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500/15 via-violet-500/10 to-teal-400/10 blur-xl" />
+      <div className="relative mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
         <Icon className={`h-4 w-4 ${warn ? "text-amber-500" : zero ? "text-muted-foreground/40" : "text-primary"}`} />
       </div>
-      <div className={`text-2xl font-semibold tabular-nums ${warn ? "text-amber-500" : zero ? "text-muted-foreground/50" : "text-foreground"}`}>
+      <div className={`relative text-2xl font-semibold tabular-nums ${warn ? "text-amber-500" : zero ? "text-muted-foreground/50" : "text-foreground"}`}>
         {loading ? "—" : value.toLocaleString()}
       </div>
     </div>
@@ -224,10 +227,13 @@ export function BrainDashboard() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Greeting */}
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">{greeting()}</h1>
-        <p className="text-sm text-muted-foreground">Your organization's shared memory — one brain, many mouths.</p>
+      {/* Greeting — synapse hero */}
+      <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-indigo-500/10 via-violet-500/5 to-teal-400/10 p-6">
+        <SynapseField className="opacity-40" />
+        <div className="relative">
+          <h1 className="text-2xl font-semibold text-foreground">{greeting()}</h1>
+          <p className="text-sm text-muted-foreground">Your organization's shared memory — one brain, many mouths.</p>
+        </div>
       </div>
 
       {notReady && (

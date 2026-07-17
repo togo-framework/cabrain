@@ -47,6 +47,8 @@ export type Recalled = {
   importance: number;
   validAt: string;
   viaEntity?: string;
+  // Present on cross-brain /search results (which brain the hit came from).
+  namespace?: string;
 };
 
 export type Gap = {
@@ -61,6 +63,27 @@ export type Gap = {
 };
 
 export type GapStatus = "indexed" | "dismissed" | "open";
+
+// Per-brain access grant attached to an access token's agent.
+export type Grant = {
+  agentId: string;
+  namespace: string;
+  canRead: boolean;
+  canWrite: boolean;
+};
+
+// Access token — the secret an agent puts in CABRAIN_TOKEN. `token` is the raw
+// secret and is only fully returned once (on create); the list may mask it.
+export type Token = {
+  token: string;
+  agentId: string;
+  label: string;
+  isAdmin: boolean;
+  createdAt: string;
+  lastUsedAt: string;
+  revoked: boolean;
+  grants: Grant[];
+};
 
 export type BrainDetail = {
   namespace: string;
@@ -107,6 +130,11 @@ export const brainApi = {
     getJSON<GraphData>(`/api/brain/graph${qs({ namespace, limit })}`),
   recall: (body: { namespace: string; query: string; limit?: number }) =>
     postJSON<{ results?: Recalled[] } & Partial<ApiError>>("/api/brain/recall", body),
+
+  // Cross-brain search engine. Empty/omitted `namespaces` searches ALL brains;
+  // each result carries the `namespace` it came from.
+  search: (body: { query: string; namespaces?: string[]; limit?: number }) =>
+    postJSON<{ results?: Recalled[] } & Partial<ApiError>>("/api/brain/search", body),
   retain: (body: { namespace: string; content: string; sourceKind?: string; sourceRef?: string }) =>
     postJSON<Record<string, unknown> & Partial<ApiError>>("/api/brain/retain", body),
 
@@ -132,4 +160,53 @@ export const brainApi = {
 
   // Streamed NDJSON download (Content-Disposition attachment) — use as a plain <a href>.
   exportUrl: (namespace: string) => `${API}/api/brain/export${qs({ namespace })}`,
+
+  // --- Access tokens + per-brain grants (admin) ---
+  tokens: () => getJSON<{ tokens: Token[] }>("/api/brain/tokens"),
+  // Returns the freshly-minted token (raw secret shown ONCE).
+  createToken: (body: { agentId: string; label: string; isAdmin: boolean }) =>
+    postJSON<Token & Partial<ApiError>>("/api/brain/tokens", body),
+  revokeToken: (body: { token: string }) =>
+    postJSON<{ revoked: boolean } & Partial<ApiError>>("/api/brain/tokens/revoke", body),
+  // Upsert a per-brain grant for an agent.
+  grant: (body: { agentId: string; namespace: string; canRead: boolean; canWrite: boolean }) =>
+    postJSON<Grant & Partial<ApiError>>("/api/brain/grant", body),
+  revokeGrant: (body: { agentId: string; namespace: string }) =>
+    postJSON<{ revoked: boolean } & Partial<ApiError>>("/api/brain/grant/revoke", body),
 };
+
+// --- Realtime -------------------------------------------------------------
+// Server-Sent Events from the brain plugin. Named events (name -> data):
+//   retain {namespace,decision} · recall {namespace,count} · search {count}
+//   gap {namespace,query} | {resolved,status} · grant {agentId,namespace}
+//   brain {deleted}
+export type BrainEventName = "retain" | "recall" | "search" | "gap" | "grant" | "brain";
+
+/**
+ * Open the brain SSE stream and dispatch parsed events to `onEvent`. Returns a
+ * cleanup fn that closes the stream. `onOpen`/`onError` track connection state
+ * for the "live" indicator.
+ */
+export function subscribeBrainEvents(opts: {
+  onEvent: (name: BrainEventName, data: any) => void;
+  onOpen?: () => void;
+  onError?: () => void;
+}): () => void {
+  const names: BrainEventName[] = ["retain", "recall", "search", "gap", "grant", "brain"];
+  const es = new EventSource(`${API}/api/brain/events`);
+  es.onopen = () => opts.onOpen?.();
+  es.onerror = () => opts.onError?.();
+  const handlers = names.map((name) => {
+    const h = (ev: MessageEvent) => {
+      let data: any = null;
+      try { data = ev.data ? JSON.parse(ev.data) : null; } catch { data = ev.data; }
+      opts.onEvent(name, data);
+    };
+    es.addEventListener(name, h as EventListener);
+    return { name, h };
+  });
+  return () => {
+    for (const { name, h } of handlers) es.removeEventListener(name, h as EventListener);
+    es.close();
+  };
+}
