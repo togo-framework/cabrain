@@ -128,6 +128,28 @@ go install ./cmd/brain-mcp     # → $GOBIN/brain-mcp on PATH
 `CABRAIN_AGENT_ID` is the session identity used for grant checks (F5); empty = the
 trusted/no-enforcement context (namespace scoping still isolates data).
 
+## Infra re-check (2026-07-17)
+
+Three infra-gated items were re-verified against the live stack from the workspace. All
+three are **still blocked on a human/superuser/host action** — none is a code change:
+
+- **BM25 tokenizer (A):** `cabrain_ml` still does not exist (`tokenizer_catalog.tokenizer`
+  → `{cabrain_bm25_tok, multilang}`, both wrapping the fixed-vocab `cabrain_bm25_model`).
+  Creating it as role `cabrain` still fails `permission denied for table tokenizer
+  (SQLSTATE 42501)`. **Remaining:** a superuser runs `infra/grant-bm25.sql` §3, then set
+  `BRAIN_BM25_TOKENIZER=cabrain_ml`. App stays on the default tokenizer until then.
+- **Cognee graph (B):** `POST cognee:8000/api/v1/add` still returns **HTTP 500
+  `{"error":"Internal server error","detail":"Missing required pgvector credentials."}`** —
+  Cognee's own vector store is still unconfigured, so cognify ingests nothing. The `flowos`
+  dataset is only an empty metadata record (`GET …/data` → `[]`, `…/graph` → 500), and
+  `entities`/`memory_entities` are both `count = 0`. `brainctl mirror` was therefore **not**
+  run (nothing to mirror). **Remaining:** configure Cognee's pgvector credentials on the
+  Cognee container (host/admin); then re-add + cognify, then `brainctl mirror flowos`.
+- **Container deploy (C):** Docker daemon still absent in the workspace — `docker info`
+  fails `dial unix /var/run/docker.sock: connect: no such file or directory` (socket not
+  present). `docker build`/`run` cannot execute here. **Remaining:** build + run on the
+  stack host per §2, and the NPM `proxy_host id=28` change per §3.
+
 ## Already done / follow-ups
 
 - **Done:** schema migrated to `cabrain` (memories+default partition, entities, memory_entities,
