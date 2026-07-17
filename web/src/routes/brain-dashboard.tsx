@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Database, Boxes, Waypoints, Share2, Users, Search as SearchIcon,
-  Terminal, Upload, Plug, Code2, CircleAlert,
+  Terminal, Upload, Plug, Code2, CircleAlert, HelpCircle, Check, X, Network,
 } from "lucide-react";
-import { brainApi, type ActivityItem, type Recalled } from "../lib/brain";
+import { brainApi, type ActivityItem, type Gap, type GapStatus, type Recalled } from "../lib/brain";
+import { BrainMindmap } from "../components/brain-mindmap";
 
 function greeting() {
   const h = new Date().getHours();
@@ -14,15 +15,16 @@ function greeting() {
 }
 
 /** Metric tile — dashes while loading, muted at zero (Cognee behavior). */
-function Metric({ label, value, loading, icon: Icon }: { label: string; value: number; loading: boolean; icon: any }) {
+function Metric({ label, value, loading, icon: Icon, tone }: { label: string; value: number; loading: boolean; icon: any; tone?: "warn" }) {
   const zero = !loading && value === 0;
+  const warn = tone === "warn" && !zero;
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <Icon className={`h-4 w-4 ${zero ? "text-muted-foreground/40" : "text-primary"}`} />
+        <Icon className={`h-4 w-4 ${warn ? "text-amber-500" : zero ? "text-muted-foreground/40" : "text-primary"}`} />
       </div>
-      <div className={`text-2xl font-semibold tabular-nums ${zero ? "text-muted-foreground/50" : "text-foreground"}`}>
+      <div className={`text-2xl font-semibold tabular-nums ${warn ? "text-amber-500" : zero ? "text-muted-foreground/50" : "text-foreground"}`}>
         {loading ? "—" : value.toLocaleString()}
       </div>
     </div>
@@ -58,6 +60,123 @@ function ActorDot({ id }: { id: string }) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: hues[h % hues.length] }} />;
+}
+
+/** Knowledge gaps — recall queries that came back thin/empty. Resolve = mark
+ * indexed (we added the memory) or dismiss (not worth indexing). */
+function KnowledgeGaps() {
+  const qc = useQueryClient();
+  // Default returns open+indexed; we only surface OPEN here.
+  const gaps = useQuery({
+    queryKey: ["brain", "gaps", "open"],
+    queryFn: () => brainApi.gaps({ status: "open", limit: 50 }),
+    refetchInterval: 15_000,
+  });
+
+  const resolve = useMutation({
+    mutationFn: (v: { id: number; status: GapStatus }) => brainApi.resolveGap(v),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["brain", "gaps"] });
+      qc.invalidateQueries({ queryKey: ["brain", "stats"] });
+    },
+  });
+
+  const open = (gaps.data?.gaps ?? []).filter((g: Gap) => g.status === "open");
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <HelpCircle className="h-4 w-4 text-amber-500" />
+        <span className="text-sm font-medium">Knowledge gaps</span>
+        {open.length > 0 && (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-500">{open.length} open</span>
+        )}
+      </div>
+      <div className="divide-y divide-border">
+        {gaps.isLoading ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading gaps…</div>
+        ) : open.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            No open gaps — every recall is finding memories. Thin/empty recalls show up here to be indexed.
+          </div>
+        ) : (
+          open.map((g) => {
+            const busy = resolve.isPending && resolve.variables?.id === g.id;
+            return (
+              <div key={g.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-foreground" title={g.query}>{g.query}</div>
+                  <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span className="rounded bg-muted px-1.5 py-0.5">{g.namespace}</span>
+                    <span>{g.hits} {g.hits === 1 ? "miss" : "misses"}</span>
+                    <span>last {g.lastSeen ? new Date(g.lastSeen).toLocaleString() : "—"}</span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    onClick={() => resolve.mutate({ id: g.id, status: "indexed" })}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-500 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" /> Mark indexed
+                  </button>
+                  <button
+                    onClick={() => resolve.mutate({ id: g.id, status: "dismissed" })}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5" /> Dismiss
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Mindmap card on the dashboard — pick a brain, see its type/entity graph. */
+function MindmapCard() {
+  const [ns, setNs] = useState("");
+  const namespaces = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces });
+  const g = useQuery({ queryKey: ["brain", "graph", ns], queryFn: () => brainApi.graph(ns, 120) });
+  const brains = namespaces.data?.brains ?? [];
+  const nodes = g.data?.nodes ?? [];
+
+  return (
+    <div className="rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Network className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium">Mindmap</span>
+        </div>
+        <select
+          value={ns}
+          onChange={(e) => setNs(e.target.value)}
+          className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-primary"
+        >
+          <option value="">All brains (overview)</option>
+          {brains.map((b) => (
+            <option key={b.namespace} value={b.namespace}>
+              {b.namespace} ({b.memories.toLocaleString()})
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="p-2">
+        {nodes.length === 0 ? (
+          <div className="flex h-[420px] flex-col items-center justify-center gap-2 text-muted-foreground">
+            <Network className="h-8 w-8 opacity-40" />
+            <div className="text-sm">{g.isLoading ? "Loading mindmap…" : "No graph yet — retain memories to grow entities."}</div>
+          </div>
+        ) : (
+          <BrainMindmap data={{ ready: true, nodes, edges: g.data?.edges ?? [] }} height={420} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 const GET_STARTED = [
@@ -126,13 +245,14 @@ export function BrainDashboard() {
       )}
 
       {/* Metrics strip */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
         <Metric label="Brains" value={stats.data?.brains ?? 0} loading={loading} icon={Database} />
         <Metric label="Memories" value={stats.data?.memories ?? 0} loading={loading} icon={Boxes} />
         <Metric label="Graph nodes" value={stats.data?.entities ?? 0} loading={loading} icon={Waypoints} />
         <Metric label="Graph edges" value={stats.data?.edges ?? 0} loading={loading} icon={Share2} />
         <Metric label="Agents" value={stats.data?.agents ?? 0} loading={loading} icon={Users} />
         <Metric label="Recalls 24h" value={stats.data?.recalls24h ?? 0} loading={loading} icon={SearchIcon} />
+        <Metric label="Open gaps" value={stats.data?.openGaps ?? 0} loading={loading} icon={HelpCircle} tone="warn" />
       </div>
 
       {/* Search your memory terminal */}
@@ -175,6 +295,10 @@ export function BrainDashboard() {
           ))}
         </div>
       </div>
+
+      {/* Mindmap + Knowledge gaps */}
+      <MindmapCard />
+      <KnowledgeGaps />
 
       {/* Get started */}
       <div>
