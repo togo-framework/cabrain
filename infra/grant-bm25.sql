@@ -13,6 +13,14 @@
 --     `cabrain_ml` / llmlingua2 config in step 3 is byte-for-byte verified against this
 --     DB's pg_tokenizer 0.1.1 (parsed+validated; only the catalog INSERT needs a
 --     superuser). Switching the app over is just BRAIN_BM25_TOKENIZER=cabrain_ml.
+--
+-- RE-CHECK (2026-07-17, as role `cabrain`): step 3 has NOT been run by a superuser yet.
+--   `SELECT name FROM tokenizer_catalog.tokenizer` → {cabrain_bm25_tok, multilang}; NO
+--   `cabrain_ml`. (Both existing rows use model `cabrain_bm25_model`, the fixed-vocab
+--   probe — tokenize('Kubernetes deployments cluster pods', …) → {} for each, so neither
+--   is production-usable.) Retrying step 3's create_tokenizer AS `cabrain` still errors
+--   exactly: `ERROR: permission denied for table tokenizer (SQLSTATE 42501)`. So this
+--   remains a SUPERUSER action; the app must stay on the default tokenizer until then.
 
 \set app_role cabrain
 
