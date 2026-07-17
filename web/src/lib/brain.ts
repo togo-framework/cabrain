@@ -229,6 +229,25 @@ export const brainApi = {
     postJSON<{ value: string } & Partial<ApiError>>("/api/brain/secrets/reveal", body),
   deleteSecret: (body: { namespace: string; name: string }) =>
     postJSON<{ deleted: boolean } & Partial<ApiError>>("/api/brain/secrets/delete", body),
+
+  // --- Live agent: chat with a selected brain (RAG grounded in its memories) ---
+  chat: (body: { namespace: string; message: string; history?: ChatTurn[]; topK?: number }) =>
+    postJSON<ChatAnswer & Partial<ApiError>>("/api/brain/chat", body),
+};
+
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+export type ChatFootprint = {
+  namespace: string;
+  query: string;
+  recalled: number;
+  model: string;
+  grounded: boolean;
+  latencyMs: number;
+};
+export type ChatAnswer = {
+  answer: string;
+  citations: Recalled[];
+  footprint: ChatFootprint;
 };
 
 export type SessionResult = {

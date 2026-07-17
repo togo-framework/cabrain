@@ -7,6 +7,7 @@ import { BrainWorkspaceLayout } from "./routes/workspace-layout";
 import { AdminLayout } from "./routes/admin-layout";
 import { BrainsHub } from "./routes/brain-brains";
 import { BrainOverview } from "./routes/brain-overview";
+import { BrainChat } from "./routes/brain-chat";
 import { BrainSearch } from "./routes/brain-search";
 import { BrainSessions } from "./routes/brain-sessions";
 import { BrainSecrets } from "./routes/brain-secrets";
@@ -69,6 +70,7 @@ const redirects = [
 // ── Brain workspace (scoped to $namespace) ───────────────────────────────────
 const workspaceLayoutRoute = createRoute({ getParentRoute: () => rootRoute, path: "/b/$namespace", component: BrainWorkspaceLayout });
 const wsOverviewRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/", component: () => <BrainOverview namespace={useNamespace()} /> });
+const wsChatRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/chat", component: BrainChat });
 const wsSearchRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/search", component: () => <BrainSearch namespace={useNamespace()} /> });
 const wsSessionsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/sessions", component: () => <BrainSessions namespace={useNamespace()} /> });
 const wsSecretsRoute = createRoute({ getParentRoute: () => workspaceLayoutRoute, path: "/secrets", component: () => <BrainSecrets namespace={useNamespace()} /> });
@@ -91,7 +93,7 @@ const routeTree = rootRoute.addChildren([
   hubLayoutRoute.addChildren([hubIndexRoute]),
   ...redirects,
   workspaceLayoutRoute.addChildren([
-    wsOverviewRoute, wsSearchRoute, wsSessionsRoute, wsSecretsRoute,
+    wsOverviewRoute, wsChatRoute, wsSearchRoute, wsSessionsRoute, wsSecretsRoute,
     wsGapsRoute, wsPermissionsRoute, wsActivityRoute,
   ]),
   adminLayoutRoute.addChildren([

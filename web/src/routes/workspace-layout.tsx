@@ -2,7 +2,7 @@ import { Outlet, useNavigate, useParams, useRouterState, Link } from "@tanstack/
 import { useQuery } from "@tanstack/react-query";
 import {
   Network, Search, Rocket, Lock, HelpCircle, KeyRound, Activity,
-  ChevronRight, ChevronsUpDown, Database,
+  ChevronRight, ChevronsUpDown, Database, MessagesSquare,
 } from "lucide-react";
 import {
   SidebarProvider, Sidebar, SidebarHeader, SidebarContent,
@@ -18,6 +18,7 @@ import { brainApi } from "../lib/brain";
 // $namespace in the URL. Overview (the graph) is the flagship index.
 const SECTIONS = [
   { seg: "", to: "/b/$namespace", label: "Overview", icon: Network },
+  { seg: "chat", to: "/b/$namespace/chat", label: "Chat", icon: MessagesSquare },
   { seg: "search", to: "/b/$namespace/search", label: "Search", icon: Search },
   { seg: "sessions", to: "/b/$namespace/sessions", label: "Sessions", icon: Rocket },
   { seg: "secrets", to: "/b/$namespace/secrets", label: "Secrets", icon: Lock },
