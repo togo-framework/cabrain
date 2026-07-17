@@ -9,6 +9,7 @@
 //	brainctl migrate     — apply schema.sql + bm25.sql (idempotent)
 //	brainctl bm25         — apply just the BM25 layer (idempotent)
 //	brainctl bm25-test    — seed a few multilingual rows and run a BM25 ranking query
+//	brainctl mirror <ns>  — mirror a namespace's Cognee graph into entities/memory_entities
 package main
 
 import (
@@ -23,6 +24,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/togo-framework/brain"
+	braincognee "github.com/togo-framework/brain-cognee"
 )
 
 func main() {
@@ -65,9 +67,25 @@ func main() {
 		fmt.Println("✓ BM25 layer applied (tokenizer + content_bm25 + index)")
 	case "bm25-test":
 		bm25Test(ctx, db)
+	case "mirror":
+		if len(os.Args) < 3 {
+			fatal("usage: brainctl mirror <namespace>")
+		}
+		mirror(ctx, db, os.Args[2])
 	default:
 		fatal("unknown command: " + os.Args[1])
 	}
+}
+
+// mirror pulls a namespace's Cognee graph into entities/memory_entities (SPEC §7).
+func mirror(ctx context.Context, db *sql.DB, namespace string) {
+	res, err := braincognee.Mirror(ctx, db, namespace)
+	if err != nil {
+		fatal("mirror: " + err.Error())
+	}
+	fmt.Printf("✓ mirrored namespace %q (Cognee dataset %s)\n", res.Namespace, res.DatasetID)
+	fmt.Printf("  entities in graph: %d · entities upserted: %d · memory links: %d\n",
+		res.EntitiesInGraph, res.EntitiesUpated, res.MemoryLinks)
 }
 
 func inspect(ctx context.Context, db *sql.DB) {

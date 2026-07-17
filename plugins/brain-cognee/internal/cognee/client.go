@@ -22,6 +22,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -142,6 +143,43 @@ func (c *Client) Search(ctx context.Context, namespace, query, searchType string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return c.recv(req)
+}
+
+// Dataset is one entry from GET /api/v1/datasets.
+type Dataset struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Datasets lists the caller's Cognee datasets.
+func (c *Client) Datasets(ctx context.Context) ([]Dataset, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v1/datasets", nil)
+	if err != nil {
+		return nil, err
+	}
+	b, err := c.recv(req)
+	if err != nil {
+		return nil, err
+	}
+	var out []Dataset
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("cognee: parse datasets: %w", err)
+	}
+	return out, nil
+}
+
+// DatasetIDByName resolves a dataset name (== CaBrain namespace) to its id.
+func (c *Client) DatasetIDByName(ctx context.Context, name string) (string, error) {
+	ds, err := c.Datasets(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, d := range ds {
+		if d.Name == name {
+			return d.ID, nil
+		}
+	}
+	return "", fmt.Errorf("cognee: no dataset named %q", name)
 }
 
 // Ping checks reachability (unauthenticated root). Used by ops/health.
@@ -357,4 +395,91 @@ func isEntityType(t string) bool {
 	default:
 		return true
 	}
+}
+
+// memDocRe recovers a CaBrain memory UUID from a Cognee document node: brain-cognee
+// uploads each memory as a file named "mem-<uuid>.txt", so the id round-trips
+// through Cognee's document node label/properties.
+var memDocRe = regexp.MustCompile(`mem-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
+
+// MemLink pairs a CaBrain memory UUID with an entity label reachable from that
+// memory's document node in the graph.
+type MemLink struct {
+	MemoryID   string
+	EntityName string
+}
+
+// nodeMemoryID extracts a CaBrain memory UUID from a node's label or string-valued
+// properties (the "mem-<uuid>.txt" naming), or "" if none.
+func nodeMemoryID(n GraphNode) string {
+	if m := memDocRe.FindStringSubmatch(n.Label); m != nil {
+		return m[1]
+	}
+	for _, v := range n.Properties {
+		if s, ok := v.(string); ok {
+			if m := memDocRe.FindStringSubmatch(s); m != nil {
+				return m[1]
+			}
+		}
+	}
+	return ""
+}
+
+// MemoryEntityLinks derives (memory_id, entity_name) pairs by finding document
+// nodes that carry a CaBrain memory id and collecting the entity nodes reachable
+// from them within maxHops (edges treated as undirected: doc → chunk → entity).
+// Best-effort: it depends on Cognee's document-node naming surviving cognify;
+// verify against a live graph once Cognee ingestion is fixed. Deterministic order.
+func (g *GraphDTO) MemoryEntityLinks() []MemLink {
+	const maxHops = 2
+	byID := make(map[string]GraphNode, len(g.Nodes))
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	adj := make(map[string][]string, len(g.Nodes))
+	for _, e := range g.Edges {
+		adj[e.Source] = append(adj[e.Source], e.Target)
+		adj[e.Target] = append(adj[e.Target], e.Source)
+	}
+	typed := false
+	for _, n := range g.Nodes {
+		if n.Type != "" {
+			typed = true
+			break
+		}
+	}
+	isEntity := func(n GraphNode) bool { return n.Label != "" && (!typed || isEntityType(n.Type)) }
+
+	seen := map[string]bool{}
+	out := []MemLink{}
+	for _, start := range g.Nodes {
+		mem := nodeMemoryID(start)
+		if mem == "" {
+			continue
+		}
+		// BFS up to maxHops from the memory's document node.
+		visited := map[string]bool{start.ID: true}
+		frontier := []string{start.ID}
+		for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
+			var next []string
+			for _, id := range frontier {
+				for _, nb := range adj[id] {
+					if visited[nb] {
+						continue
+					}
+					visited[nb] = true
+					next = append(next, nb)
+					if n, ok := byID[nb]; ok && isEntity(n) {
+						key := mem + "\x00" + n.Label
+						if !seen[key] {
+							seen[key] = true
+							out = append(out, MemLink{MemoryID: mem, EntityName: n.Label})
+						}
+					}
+				}
+			}
+			frontier = next
+		}
+	}
+	return out
 }
