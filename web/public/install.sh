@@ -95,5 +95,7 @@ Next steps
   2. cabrain mcp:install claude-desktop         # or claude-code | codex | gemini | cursor
   3. restart your client — the "cabrain" brain tools appear automatically
 
+Update later:  curl -fsSL https://cabrain.fadymondy.com/upgrade.sh | sh
+
 Docs:  $SITE   ·   cabrain help
 EOF
