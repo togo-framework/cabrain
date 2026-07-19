@@ -23,8 +23,10 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
     return () => { alive = false; };
   }, []);
 
-  async function finish() {
-    const me = await auth.me();
+  // Resolve the signed-in identity. Prefer the authoritative user the login
+  // response already returned; only fall back to /me if it wasn't provided.
+  async function finish(user?: Me | null) {
+    const me = user ?? (await auth.me());
     if (me) { onSignedIn(me); return; }
     setError("Signed in, but the session did not resolve. Check AUTH_SECRET / cookies.");
   }
@@ -33,8 +35,8 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
     e.preventDefault();
     setBusy(true); setError("");
     try {
-      await auth.login(email.trim(), password);
-      await finish();
+      const { user } = await auth.login(email.trim(), password);
+      await finish(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "login failed");
     } finally { setBusy(false); }
@@ -43,8 +45,8 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
   async function onDevLogin() {
     setBusy(true); setError("");
     try {
-      await auth.devLogin();
-      await finish();
+      const { user } = await auth.devLogin();
+      await finish(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "developer login failed");
     } finally { setBusy(false); }

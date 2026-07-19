@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/togo-framework/cabrain/internal/server"
 )
@@ -21,6 +22,19 @@ func serveSPA(router interface {
 	fs := http.FileServer(http.Dir(dist))
 	index := filepath.Join(dist, "index.html")
 	router.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An /api/* (or /graphql) request that reached the SPA catch-all is a
+		// genuinely UNREGISTERED backend route — the real API/GraphQL handlers are
+		// more specific and win before this. Never answer it with the HTML shell:
+		// that returns text/html with 200, and the frontend's fetch(...).json()
+		// then dies on `Unexpected token '<', "<!doctype "...`. Return proper 404
+		// JSON so callers see a clean error (and the missing route is visible, not
+		// silently masked).
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/graphql" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"no such API route"}}`))
+			return
+		}
 		p := filepath.Join(dist, filepath.Clean(r.URL.Path))
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			fs.ServeHTTP(w, r)
