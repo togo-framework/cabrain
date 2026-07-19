@@ -77,7 +77,8 @@ done
 
 # Prune dangling images + build cache older than 24h (safe: only untagged, unrooted layers)
 echo "  --- prune ---"
-docker image prune -f 2>&1 | tail -1
+docker container prune -f 2>&1 | tail -1
+  docker image prune -f 2>&1 | tail -1
 docker builder prune -f --filter until=24h 2>&1 | tail -1
 
 docker ps --format '{{.Names}} {{.Status}}' | grep -E "^cabrain "
