@@ -1,24 +1,131 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Download, Trash2, AlertTriangle, HelpCircle, Search, Rocket,
-  ArrowRight, Boxes, Waypoints, Lock, Activity as ActivityIcon,
+  Boxes, Plus, Search, Rocket, Download, Trash2, MoreHorizontal,
+  ArrowRight, HelpCircle, LayoutGrid, List, Waypoints, Activity, Lock, Loader2,
 } from "lucide-react";
+import {
+  Button, Input, Badge, StatusBadge, StatCard, PageHeader, EmptyState, Skeleton,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+  ToggleGroup, ToggleGroupItem,
+} from "@togo-framework/ui";
 import { brainApi, type BrainDetail, type NamespaceInfo } from "../lib/brain";
-import { SynapseField, NeuralGlyph, NeuralCellMark } from "../components/neural";
-import { hueForBrain as hueFor } from "../lib/brain-colors";
+import { hueForBrain } from "../lib/brain-colors";
 import { LaunchSessionModal } from "../components/launch-session-modal";
 
-/** Typed-confirm delete modal — the button only enables once the user types the
- * exact namespace, then POSTs { namespace, confirm } (confirm must equal namespace). */
-function DeleteBrainModal({ namespace, onClose }: { namespace: string; onClose: () => void }) {
+/* ---------------------------------------------------------------- helpers -- */
+
+function relTime(iso?: string): string {
+  if (!iso) return "never";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "never";
+  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
+  const units: [number, string][] = [
+    [60, "s"], [3600, "m"], [86400, "h"], [604800, "d"], [2629800, "w"], [31557600, "mo"],
+  ];
+  let prev = 1;
+  for (const [limit, label] of units) {
+    if (s < limit) return `${Math.floor(s / prev)}${label} ago`;
+    prev = limit;
+  }
+  return `${Math.floor(s / 31557600)}y ago`;
+}
+
+function nf(n?: number) { return (n ?? 0).toLocaleString(); }
+
+/** A restrained per-brain identity monogram — a tinted tile in the brain's own
+ *  stable hue. Identity without the rainbow: one accent, low chroma, no glow. */
+export function BrainAvatar({ namespace, size = 40 }: { namespace: string; size?: number }) {
+  const c = hueForBrain(namespace);
+  return (
+    <span
+      aria-hidden
+      className="flex shrink-0 items-center justify-center rounded-lg font-semibold uppercase"
+      style={{
+        height: size, width: size, fontSize: size * 0.42,
+        color: c, background: `color-mix(in srgb, ${c} 14%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${c} 30%, transparent)`,
+      }}
+    >
+      {namespace.slice(0, 1)}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------ create modal -- */
+
+function NewBrainDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  const create = useMutation({
+    mutationFn: () =>
+      brainApi.retain({
+        namespace: slug,
+        content: `Brain "${slug}" created from the console.${desc.trim() ? " " + desc.trim() : ""}`,
+        sourceKind: "system",
+        sourceRef: "console/new-brain",
+      }),
+    onSuccess: (res) => {
+      if ((res as { error?: unknown }).error) return;
+      qc.invalidateQueries({ queryKey: ["brain", "namespaces"] });
+      qc.invalidateQueries({ queryKey: ["brain", "stats"] });
+      setName(""); setDesc(""); onClose();
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New brain</DialogTitle>
+          <DialogDescription>
+            A brain is a namespace. Creating one seeds a marker so it exists and is connectable.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Name</label>
+            <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. research" />
+            {name && slug !== name.trim().toLowerCase() && (
+              <p className="text-xs text-muted-foreground">Namespace: <code className="font-mono">{slug || "—"}</code></p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Description <span className="text-muted-foreground">(optional)</span></label>
+            <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="What this brain holds" />
+          </div>
+          {(create.data as { error?: { message?: string } } | undefined)?.error && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {(create.data as { error: { message?: string } }).error.message ?? "Could not create brain"}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => create.mutate()} disabled={!slug || create.isPending}>
+            {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            Create brain
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------ delete modal -- */
+
+function DeleteBrainDialog({ namespace, onClose }: { namespace: string; onClose: () => void }) {
   const qc = useQueryClient();
   const [typed, setTyped] = useState("");
   const del = useMutation({
     mutationFn: () => brainApi.deleteBrain({ namespace, confirm: namespace }),
     onSuccess: (res) => {
-      if (res.error) return; // keep the modal open; error shown below
+      if (res.error) return;
       qc.invalidateQueries({ queryKey: ["brain", "namespaces"] });
       qc.invalidateQueries({ queryKey: ["brain", "stats"] });
       onClose();
@@ -27,291 +134,263 @@ function DeleteBrainModal({ namespace, onClose }: { namespace: string; onClose: 
   const match = typed === namespace;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-rose-500/15 text-rose-500"><AlertTriangle className="h-5 w-5" /></span>
-          <div>
-            <div className="font-semibold text-foreground">Delete brain</div>
-            <div className="text-xs text-muted-foreground">This permanently removes every memory in <code>{namespace}</code>.</div>
-          </div>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-destructive">Delete brain</DialogTitle>
+          <DialogDescription>
+            This permanently removes every memory in <code className="font-mono text-foreground">{namespace}</code>. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <label className="text-sm text-muted-foreground">
+            Type <span className="font-mono font-medium text-foreground">{namespace}</span> to confirm.
+          </label>
+          <Input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={namespace} />
+          {del.data?.error && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {del.data.error.code}: {del.data.error.message}
+            </p>
+          )}
         </div>
-        <p className="mb-2 text-sm text-muted-foreground">
-          Type <span className="font-mono font-medium text-foreground">{namespace}</span> to confirm.
-        </p>
-        <input
-          autoFocus
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder={namespace}
-          className="mb-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-rose-500"
-        />
-        {del.data?.error && (
-          <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
-            {del.data.error.code}: {del.data.error.message}
-          </div>
-        )}
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Cancel</button>
-          <button
-            onClick={() => del.mutate()}
-            disabled={!match || del.isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Trash2 className="h-4 w-4" /> {del.isPending ? "Deleting…" : "Delete brain"}
-          </button>
-        </div>
-      </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="destructive" onClick={() => del.mutate()} disabled={!match || del.isPending}>
+            {del.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            Delete brain
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ---------------------------------------------------------- row-level menu -- */
+
+function BrainActions({ namespace, onLaunch, onDelete }: { namespace: string; onLaunch: () => void; onDelete: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative z-20 h-8 w-8 shrink-0" aria-label={`Actions for ${namespace}`} onClick={(e) => e.preventDefault()}>
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="z-30">
+        <DropdownMenuItem onSelect={onLaunch}><Rocket className="h-4 w-4" /> Launch session</DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href={brainApi.exportUrl(namespace)}><Download className="h-4 w-4" /> Export JSONL</a>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onDelete} className="text-destructive focus:text-destructive"><Trash2 className="h-4 w-4" /> Delete brain</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function TypeTags({ detail }: { detail?: BrainDetail }) {
+  if (!detail) return <Skeleton className="h-5 w-40" />;
+  const types = Object.entries(detail.types).sort((a, b) => b[1] - a[1]);
+  if (types.length === 0) return <span className="text-xs text-muted-foreground">No memory types yet</span>;
+  const top = types.slice(0, 3);
+  const rest = types.length - top.length;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {top.map(([t, n]) => (
+        <Badge key={t} variant="secondary" className="font-normal">
+          {t}<span className="ms-1 tabular-nums opacity-60">{nf(n)}</span>
+        </Badge>
+      ))}
+      {rest > 0 && <span className="text-xs text-muted-foreground">+{rest} more</span>}
     </div>
   );
 }
 
-/** A brain's living identity for compact contexts (breadcrumbs, dense lists): a
- * neural glyph in the brain's own stable hue with a soft synaptic glow. */
-export function BrainAvatar({ namespace, size = 8 }: { namespace: string; size?: number }) {
-  const c = hueFor(namespace);
+/* ------------------------------------------------------------- brain cell -- */
+
+function useDetail(namespace: string) {
+  const q = useQuery({ queryKey: ["brain", "detail", namespace], queryFn: () => brainApi.brainDetail(namespace) });
+  return q.data && !q.data.error ? (q.data as BrainDetail) : undefined;
+}
+
+function Metric({ value, label }: { value: string; label: string }) {
   return (
-    <span
-      className="relative flex shrink-0 items-center justify-center rounded-full"
-      style={{
-        height: `${size * 0.25}rem`, width: `${size * 0.25}rem`,
-        background: `radial-gradient(circle at 30% 30%, ${c}33, ${c}14)`,
-        boxShadow: `0 0 14px -4px ${c}`, color: c, border: `1px solid ${c}55`,
-      }}
-      title={namespace}
-    >
-      <NeuralGlyph className="h-1/2 w-1/2" />
-    </span>
+    <div className="min-w-0">
+      <div className="truncate text-lg font-semibold tabular-nums leading-tight text-foreground">{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+    </div>
   );
 }
 
-/** A memory-type as a synapse terminal — a glowing dot + label, NOT a bar. A
- * cluster of these reads like dendrite endings rather than a spreadsheet. */
-function TypeSynapse({ label, count }: { label: string; count: number }) {
-  const c = hueFor(label);
+function BrainCard({ b, onLaunch, onDelete }: { b: NamespaceInfo; onLaunch: () => void; onDelete: () => void }) {
+  const d = useDetail(b.namespace);
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] text-muted-foreground"
-      style={{ background: `${c}12` }}
-      title={`${label} · ${count.toLocaleString()}`}
-    >
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c, boxShadow: `0 0 6px ${c}` }} />
-      <span className="truncate text-foreground/80">{label}</span>
-      <span className="tabular-nums opacity-70">{count.toLocaleString()}</span>
-    </span>
-  );
-}
-
-/** One brain, rendered as a living neural cell — an organic node in the map, not
- * a database row. A pulsing cytoplasm glow in the brain's own hue fills the
- * membrane, faint synapse filaments drift inside, and the firing soma
- * (NeuralGlyph) is its face. Key facts read as synapse terminals, and the whole
- * cell is the primary "Enter brain" gesture. */
-function BrainCell({ b, onDelete, onLaunch }: { b: NamespaceInfo; onDelete: () => void; onLaunch: () => void }) {
-  const c = hueFor(b.namespace);
-  const detail = useQuery({
-    queryKey: ["brain", "detail", b.namespace],
-    queryFn: () => brainApi.brainDetail(b.namespace),
-  });
-  const d: BrainDetail | undefined = detail.data && !detail.data.error ? detail.data : undefined;
-
-  const types = d ? Object.entries(d.types).sort((a, e) => e[1] - a[1]) : [];
-  const topTypes = types.slice(0, 4);
-
-  return (
-    <div
-      className="cb-fire group relative flex flex-col overflow-hidden rounded-[1.75rem] p-5 transition duration-300 hover:-translate-y-1"
-      style={{
-        border: `1px solid ${c}22`,
-        background: `radial-gradient(120% 80% at 50% -10%, ${c}1f, transparent 60%), color-mix(in srgb, var(--card) 78%, transparent)`,
-        boxShadow: `0 12px 40px -22px ${c}, inset 0 0 40px -30px ${c}`,
-        backdropFilter: "blur(8px)",
-      }}
-    >
-      {/* pulsing cytoplasm — the cell's living glow (organic, not a rectangle) */}
-      <div
-        className="cb-halo pointer-events-none absolute -right-10 -top-14 h-52 w-52 rounded-full blur-2xl"
-        style={{ background: `radial-gradient(circle, ${c}55, transparent 62%)` }}
-      />
-      {/* faint synapse filaments drifting through the membrane */}
-      <SynapseField className="opacity-[0.10] transition-opacity duration-300 group-hover:opacity-20" />
-
-      {/* Stretched link — the whole cell enters the brain (no nested anchors:
-          the action controls below sit above this overlay via z-index). */}
+    <div className="group relative flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/40 focus-within:border-primary/50">
       <Link
         to="/b/$namespace" params={{ namespace: b.namespace }}
-        aria-label={`Enter ${b.namespace}`} title={`Enter ${b.namespace}`}
-        className="absolute inset-0 z-[1] rounded-[1.75rem]"
+        aria-label={`Open ${b.namespace}`}
+        className="absolute inset-0 z-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
-
-      {/* Identity: firing soma + namespace + open-gaps synapse-warning */}
-      <div className="pointer-events-none relative z-[2] flex items-center gap-3">
-        <NeuralCellMark color={c} size={54} />
+      <div className="pointer-events-none relative z-10 flex items-start gap-3">
+        <BrainAvatar namespace={b.namespace} size={40} />
         <div className="min-w-0 flex-1">
-          <div
-            className="truncate text-base font-semibold text-foreground transition group-hover:text-primary"
-            style={{ textShadow: `0 0 18px ${c}33` }}
-          >
-            {b.namespace}
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            {b.lastAt ? `firing · ${new Date(b.lastAt).toLocaleDateString()}` : "dormant"}
-          </div>
+          <div className="truncate font-semibold text-foreground group-hover:text-primary">{b.namespace}</div>
+          <div className="text-xs text-muted-foreground">Updated {relTime(b.lastAt)}</div>
         </div>
-        {d && d.openGaps > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-500">
-            <HelpCircle className="h-3 w-3" /> {d.openGaps}
-          </span>
-        )}
+        <div className="pointer-events-auto"><BrainActions namespace={b.namespace} onLaunch={onLaunch} onDelete={onDelete} /></div>
       </div>
 
-      {/* Mass of the cell — memory count */}
-      <div className="pointer-events-none relative z-[2] mt-4 flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tabular-nums text-foreground" style={{ textShadow: `0 0 22px ${c}44` }}>
-          {b.memories.toLocaleString()}
+      <div className="pointer-events-none relative z-10 mt-4 grid grid-cols-3 gap-2">
+        <Metric value={nf(b.memories)} label="memories" />
+        <Metric value={d ? nf(d.recalls) : "—"} label="recalls" />
+        <Metric value={d ? nf(Object.keys(d.types).length) : "—"} label="types" />
+      </div>
+
+      <div className="pointer-events-none relative z-10 mt-3 min-h-[1.75rem]"><TypeTags detail={d} /></div>
+
+      <div className="pointer-events-none relative z-10 mt-4 flex items-center justify-between border-t border-border pt-3">
+        {d && d.openGaps > 0
+          ? <StatusBadge tone="warning"><HelpCircle className="h-3 w-3" /> {d.openGaps} gaps</StatusBadge>
+          : <span className="text-xs text-muted-foreground">No open gaps</span>}
+        <span className="pointer-events-none inline-flex items-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-primary">
+          Open <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
         </span>
-        <span className="text-xs text-muted-foreground">memories</span>
-        {d && (
-          <span className="ms-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Search className="h-3 w-3" /> {d.recalls.toLocaleString()}
-          </span>
-        )}
-      </div>
-
-      {/* Dendrite terminals — top memory types as glowing synapse dots */}
-      <div className="pointer-events-none relative z-[2] mt-3 flex min-h-[2.75rem] flex-wrap content-start gap-1.5">
-        {detail.isLoading ? (
-          <span className="text-xs text-muted-foreground">Sensing dendrites…</span>
-        ) : topTypes.length > 0 ? (
-          topTypes.map(([t, n]) => <TypeSynapse key={t} label={t} count={n} />)
-        ) : (
-          <span className="text-xs text-muted-foreground">Fresh cell — no memory types yet.</span>
-        )}
-      </div>
-
-      {/* Primary synapse — enter the brain (visual; the stretched link handles the click). */}
-      <div
-        className="pointer-events-none relative z-[2] mt-4 inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium text-white transition group-hover:brightness-110"
-        style={{ background: `linear-gradient(135deg, ${c}, ${c}bb)`, boxShadow: `0 6px 20px -8px ${c}` }}
-      >
-        Enter brain <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-      </div>
-
-      {/* Secondary admin synapses — elevated above the stretched link so they're
-          independently clickable. */}
-      <div className="relative z-[3] mt-3 flex items-center gap-2 border-t pt-3" style={{ borderColor: `${c}1f` }}>
-        <button
-          onClick={onLaunch}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-card/60 px-2.5 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
-        >
-          <Rocket className="h-3.5 w-3.5" /> Launch
-        </button>
-        <a
-          href={brainApi.exportUrl(b.namespace)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-card/60 px-2.5 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
-        >
-          <Download className="h-3.5 w-3.5" /> Export
-        </a>
-        <button
-          onClick={onDelete}
-          title="Delete brain"
-          className="ms-auto rounded-lg border border-rose-500/40 bg-card/60 p-1.5 text-rose-500 transition hover:bg-rose-500/10"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
       </div>
     </div>
   );
 }
 
-/** A glowing stat node for the neural header — reads as a synapse, not a KPI box. */
-function HeroStat({ icon: Icon, label, value, loading }: { icon: any; label: string; value: number; loading: boolean }) {
+function RowStat({ value, label }: { value: string; label: string }) {
   return (
-    <div className="group relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-border/60 bg-card/60 px-3.5 py-2.5 backdrop-blur">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary shadow-[0_0_16px_-6px] shadow-primary/60">
-        <Icon className="h-4 w-4" />
-      </span>
-      <div>
-        <div className="text-base font-semibold tabular-nums leading-none text-foreground">{loading ? "—" : value.toLocaleString()}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">{label}</div>
-      </div>
+    <div className="text-right">
+      <div className="text-sm font-semibold tabular-nums text-foreground">{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
     </div>
   );
 }
 
-/** Brains hub — the flagship. The landing reads as looking *at* a brain: a neural
- * map where every brain is a glowing, firing cell wired into one organism. Each
- * cell opens that brain's scoped workspace. */
+function BrainRow({ b, onLaunch, onDelete }: { b: NamespaceInfo; onLaunch: () => void; onDelete: () => void }) {
+  const d = useDetail(b.namespace);
+  return (
+    <div className="group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/40">
+      <Link to="/b/$namespace" params={{ namespace: b.namespace }} aria-label={`Open ${b.namespace}`} className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      <div className="pointer-events-none"><BrainAvatar namespace={b.namespace} size={34} /></div>
+      <div className="pointer-events-none min-w-0 flex-1">
+        <div className="truncate font-medium text-foreground group-hover:text-primary">{b.namespace}</div>
+        <div className="truncate text-xs text-muted-foreground">Updated {relTime(b.lastAt)}</div>
+      </div>
+      <div className="pointer-events-none hidden items-center gap-6 sm:flex">
+        <RowStat value={nf(b.memories)} label="memories" />
+        <RowStat value={d ? nf(d.recalls) : "—"} label="recalls" />
+        {d && d.openGaps > 0 && <StatusBadge tone="warning"><HelpCircle className="h-3 w-3" /> {d.openGaps}</StatusBadge>}
+      </div>
+      <div className="relative z-20"><BrainActions namespace={b.namespace} onLaunch={onLaunch} onDelete={onDelete} /></div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- the hub -- */
+
+type Sort = "recent" | "name" | "memories";
+type ViewMode = "grid" | "list";
+
 export function BrainsHub() {
   const q = useQuery({ queryKey: ["brain", "namespaces"], queryFn: brainApi.namespaces, refetchInterval: 15_000 });
-  const stats = useQuery({ queryKey: ["brain", "stats"], queryFn: brainApi.stats, refetchInterval: 10_000 });
-  const brains = q.data?.brains ?? [];
+  const stats = useQuery({ queryKey: ["brain", "stats"], queryFn: brainApi.stats, refetchInterval: 15_000 });
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<Sort>("recent");
+  const [view, setView] = useState<ViewMode>("grid");
   const [deleteNs, setDeleteNs] = useState<string | null>(null);
   const [launchNs, setLaunchNs] = useState<string | null>(null);
-  const loading = stats.isLoading;
+  const [creating, setCreating] = useState(false);
+
+  const brains = useMemo(() => {
+    let rows = q.data?.brains ?? [];
+    const term = search.trim().toLowerCase();
+    if (term) rows = rows.filter((b) => b.namespace.toLowerCase().includes(term));
+    return [...rows].sort((a, b) => {
+      if (sort === "name") return a.namespace.localeCompare(b.namespace);
+      if (sort === "memories") return b.memories - a.memories;
+      return new Date(b.lastAt || 0).getTime() - new Date(a.lastAt || 0).getTime();
+    });
+  }, [q.data, search, sort]);
+
+  const s = stats.data;
+  const loading = q.isLoading;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Neural header — the organism at a glance. */}
-      <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-indigo-500/15 via-violet-500/8 to-teal-400/12 p-6">
-        <SynapseField className="opacity-50" />
-        <div className="relative">
-          <div className="mb-1 flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-teal-400 text-white shadow-[0_0_22px_-4px] shadow-violet-500/60">
-              <NeuralGlyph className="h-6 w-6 cb-breathe" />
-            </span>
-            <div>
-              <h1 className="text-2xl font-semibold text-foreground">Your brains</h1>
-              <p className="text-sm text-muted-foreground">
-                One shared memory, many living brains — enter a cell to explore its graph, sessions, sources and gaps.
-              </p>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <HeroStat icon={NeuralGlyph} label="brains" value={stats.data?.brains ?? brains.length} loading={loading} />
-            <HeroStat icon={Boxes} label="memories" value={stats.data?.memories ?? 0} loading={loading} />
-            <HeroStat icon={Waypoints} label="graph nodes" value={stats.data?.entities ?? 0} loading={loading} />
-            <HeroStat icon={ActivityIcon} label="recalls · 24h" value={stats.data?.recalls24h ?? 0} loading={loading} />
-            <HeroStat icon={HelpCircle} label="open gaps" value={stats.data?.openGaps ?? 0} loading={loading} />
-          </div>
+    <div className="mx-auto w-full max-w-6xl space-y-5 p-4 sm:p-6">
+      <PageHeader
+        title="Brains"
+        description="Each brain is an isolated memory namespace. Open one to explore its graph, sessions, sources and gaps."
+        icon={<Boxes className="h-5 w-5" />}
+        actions={<Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> New brain</Button>}
+      />
+
+      {/* KPI strip — restrained stat tiles, wraps on mobile */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCard tone="info" label="Brains" value={loading ? "—" : nf(s?.brains ?? brains.length)} />
+        <StatCard label="Memories" value={loading ? "—" : nf(s?.memories)} />
+        <StatCard label="Graph nodes" value={loading ? "—" : nf(s?.entities)} />
+        <StatCard tone="success" label="Recalls · 24h" value={loading ? "—" : nf(s?.recalls24h)} />
+        <StatCard tone={s?.openGaps ? "warning" : "muted"} label="Open gaps" value={loading ? "—" : nf(s?.openGaps)} />
+      </div>
+
+      {/* Toolbar — search + sort + view, stacks on mobile */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search brains…" className="ps-9" />
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Recently updated</SelectItem>
+              <SelectItem value="name">Name (A–Z)</SelectItem>
+              <SelectItem value="memories">Most memories</SelectItem>
+            </SelectContent>
+          </Select>
+          <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as ViewMode)} className="hidden sm:flex">
+            <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
+            <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
+          </ToggleGroup>
         </div>
       </div>
 
-      {/* The neural map — cells wired together by faint flowing synapses behind them. */}
-      {brains.length === 0 ? (
-        <div className="relative overflow-hidden rounded-2xl border border-border bg-card/70 p-12 text-center">
-          <SynapseField className="opacity-30" />
-          <div className="relative mx-auto max-w-sm">
-            <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary"><NeuralGlyph className="h-6 w-6" /></span>
-            <div className="text-sm text-muted-foreground">
-              {q.isLoading ? "Waking the network…" : "No brains yet. A brain forms the first time an agent retains a memory into a namespace."}
-            </div>
-          </div>
+      {/* Content */}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+        </div>
+      ) : brains.length === 0 ? (
+        <EmptyState
+          icon={<Boxes className="h-6 w-6" />}
+          title={search ? "No brains match your search" : "No brains yet"}
+          description={search ? "Try a different name." : "A brain forms the moment an agent retains a memory into a namespace — or create one now."}
+          action={!search ? <Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" /> New brain</Button> : undefined}
+        />
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {brains.map((b) => <BrainCard key={b.namespace} b={b} onLaunch={() => setLaunchNs(b.namespace)} onDelete={() => setDeleteNs(b.namespace)} />)}
         </div>
       ) : (
-        <div className="relative">
-          {/* decorative connective tissue — synapses weaving between the cells */}
-          <SynapseField className="opacity-[0.12]" />
-          <div className="relative grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {brains.map((b) => (
-              <BrainCell
-                key={b.namespace}
-                b={b}
-                onDelete={() => setDeleteNs(b.namespace)}
-                onLaunch={() => setLaunchNs(b.namespace)}
-              />
-            ))}
-          </div>
+        <div className="space-y-2">
+          {brains.map((b) => <BrainRow key={b.namespace} b={b} onLaunch={() => setLaunchNs(b.namespace)} onDelete={() => setDeleteNs(b.namespace)} />)}
         </div>
       )}
 
-      {/* Tokens, users and cross-brain admin live out of the main flow. */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-border bg-card/70 px-4 py-3 text-xs text-muted-foreground backdrop-blur">
-        <Lock className="h-3.5 w-3.5" /> Tokens, users and cross-brain admin live under
+      {/* Admin pointer */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+        <Lock className="h-3.5 w-3.5" /> Tokens, users and cross-brain access controls live under
         <Link to="/admin/users" className="font-medium text-primary hover:underline">Admin</Link>.
+        <span className="ms-auto hidden items-center gap-3 sm:flex">
+          <span className="inline-flex items-center gap-1"><Waypoints className="h-3.5 w-3.5" /> {nf(s?.entities)} nodes</span>
+          <span className="inline-flex items-center gap-1"><Activity className="h-3.5 w-3.5" /> {nf(s?.sessions24h)} sessions · 24h</span>
+        </span>
       </div>
 
-      {deleteNs && <DeleteBrainModal namespace={deleteNs} onClose={() => setDeleteNs(null)} />}
+      <NewBrainDialog open={creating} onClose={() => setCreating(false)} />
+      {deleteNs && <DeleteBrainDialog namespace={deleteNs} onClose={() => setDeleteNs(null)} />}
       {launchNs && <LaunchSessionModal namespace={launchNs} onClose={() => setLaunchNs(null)} />}
     </div>
   );
