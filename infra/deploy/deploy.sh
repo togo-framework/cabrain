@@ -25,7 +25,7 @@ docker build -t cabrain:latest . 2>&1 | tail -12
 CABRAIN_PW=$(echo "$CABRAIN_DATABASE_URL" | sed -E 's|.*://cabrain:([^@]+)@.*|\1|')
 docker rm -f cabrain 2>/dev/null || true
 docker run -d --name cabrain \
-  --network stack_stacknet --restart unless-stopped \
+  --network stack_stacknet --network-alias cabrain-app --restart unless-stopped \
   --env-file /deploy/.env \
   -e DATABASE_URL="postgresql://cabrain:${CABRAIN_PW}@pg:5432/cabrain?search_path=cabrain_auth,public" \
   -e DB_DRIVER=pgx -e CACHE_DRIVER=redis -e REDIS_URL=redis://redis:6379 \
