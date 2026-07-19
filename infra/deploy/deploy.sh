@@ -23,14 +23,35 @@ ls -d internal/db/gen internal/graph/gen 2>&1
 docker build -t cabrain:latest . 2>&1 | tail -12
 
 CABRAIN_PW=$(echo "$CABRAIN_DATABASE_URL" | sed -E 's|.*://cabrain:([^@]+)@.*|\1|')
-docker rm -f cabrain 2>/dev/null || true
+
+# Remove ANY stale/duplicate app container before starting — NOT just the one named
+# "cabrain". A leftover from an earlier deploy (any cabrain* name, OR anything built
+# from the app image, even after a retag) left the NPM upstream round-robining onto an
+# OLD, UNENFORCED container, so the public URL was intermittently reachable WITHOUT
+# auth. Match by NAME or IMAGE containing "cabrain"; never touch the deploy webhook
+# (cabrain-deploy / stack-webhook) or the shared infra services.
+for c in $(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}' \
+            | grep -iE 'cabrain' \
+            | grep -viE 'cabrain-deploy|stack-webhook|cabrain-pg|cabrain-nats|cabrain-gotrue|cabrain-storage' \
+            | cut -d'|' -f1); do
+  echo "  removing stale app container: $c"; docker rm -f "$c" 2>/dev/null || true
+done
+
 docker run -d --name cabrain \
   --network stack_stacknet --restart unless-stopped \
   --env-file /deploy/.env \
   -e DATABASE_URL="postgresql://cabrain:${CABRAIN_PW}@pg:5432/cabrain?search_path=cabrain_auth,public" \
   -e DB_DRIVER=pgx -e CACHE_DRIVER=redis -e REDIS_URL=redis://redis:6379 \
   -e BRAIN_BM25_TOKENIZER=cabrain_ml \
+  -e CABRAIN_REQUIRE_AUTH=1 \
+  -e BRAIN_CHAT_LLM_MODEL=qwen2.5:3b-instruct \
   cabrain:latest
+# CABRAIN_REQUIRE_AUTH=1 makes EVERY /api/brain/* endpoint require a login session
+# (browser) or a valid X-Cabrain-Token (MCP) — the public URL is NOT open. Per-brain
+# grants (canRead/canWrite/adminOnly) still run in-handler. This line must never be
+# dropped again: without it the deploy silently serves the whole brain unauthenticated.
+# (AUTH_SECRET + CABRAIN_SECRETS_KEY come from --env-file so sessions + the secrets
+# vault survive restarts — they MUST be present in /deploy/.env.)
 
 # Prune dangling images + build cache older than 24h (safe: only untagged, unrooted layers)
 echo "  --- prune ---"
@@ -39,4 +60,20 @@ docker builder prune -f --filter until=24h 2>&1 | tail -1
 
 sleep 5
 docker ps --format '{{.Names}} {{.Status}}' | grep -E "^cabrain "
+
+# Regression guard: PROVE the public gate is enforcing auth before calling it done.
+# distroless has no shell to exec into, so probe from a throwaway curl container on
+# the same network. Fail CLOSED — if auth is definitively off, tear the container
+# down (a 502 is safe; an open brain is not). A probe that can't run only warns, so
+# a missing image / network hiccup never blocks a legitimate deploy.
+echo "  --- verifying auth gate ---"
+PING=$(docker run --rm --network stack_stacknet curlimages/curl -s -m 10 \
+        http://cabrain:8080/api/brain/ping 2>/dev/null || true)
+echo "  gate probe: ${PING:-<no response>}"
+case "$PING" in
+  *'"authRequired":true'*)  echo "  ✓ auth ENFORCED — public URL requires a session or token" ;;
+  *'"authRequired":false'*) echo "  ✗ AUTH OFF despite CABRAIN_REQUIRE_AUTH=1 — refusing to leave the brain public"
+                            docker rm -f cabrain; exit 1 ;;
+  *)                        echo "  ! could not probe the gate (non-fatal) — verify https://cabrain.fadymondy.com/api/brain/ping manually" ;;
+esac
 echo "=== [$(date -Is)] deploy done ==="
