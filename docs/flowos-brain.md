@@ -38,7 +38,7 @@ Near-duplicate/templated rows collapse via the §4.1 write-decision (that's why 
 row total is ~1,780, not the raw ~2,600). Each memory embeds via TEI (bge-m3) and is
 recallable by vector + BM25 + rerank. Re-run / extend with `scratchpad/ingest.py`,
 `enrich.py`, and `dbingest.py` (the DB pass needs the SSH tunnel:
-`ssh -L 15432:<DB_HOST>:5432 <USER>@<JUMP_HOST>`).
+`ssh -L 15432:<DB_HOST>:5432 <USER>@<JUMP_HOST>` — real host/creds held by the owner).
 
 ## How to query it (from a new Claude Code session)
 
