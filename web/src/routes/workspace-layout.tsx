@@ -14,6 +14,7 @@ import { NeuralGlyph, SynapseField, NeuralBackdrop, NeuralCellMark } from "../co
 import { UserMenu } from "../components/chrome";
 import { brainApi } from "../lib/brain";
 import { hueForBrain } from "../lib/brain-colors";
+import { useSidebarState } from "../lib/sidebar";
 
 // The brain workspace is a scoped surface: every section below is bound to the
 // $namespace in the URL. Overview (the graph) is the flagship index. Sources
@@ -45,9 +46,10 @@ export function BrainWorkspaceLayout() {
   const brains = namespaces.data?.brains ?? [];
 
   const isActive = (seg: string) => (seg === "" ? pathname === base : rest === seg);
+  const sidebar = useSidebarState();
 
   return (
-    <SidebarProvider>
+    <SidebarProvider open={sidebar.open} onOpenChange={sidebar.setOpen}>
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <Link to="/" className="flex items-center gap-2 px-2 py-1.5" title="Back to Brains">

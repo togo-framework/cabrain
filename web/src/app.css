@@ -12,6 +12,26 @@ body { margin: 0; font-family: var(--tg-font); }
   body { @apply bg-background text-foreground antialiased; }
 }
 
+/* ── Minimized (icon) sidebar centering ────────────────────────────────────
+   togo's Sidebar leaves the label span and left-alignment on menu buttons when
+   collapsed to the 3rem icon rail, so icons sit off-center and spill outside the
+   rail. Force every icon to the center and drop the leftover label + stray
+   horizontal padding while collapsed (scoped to data-collapsible="icon", so the
+   expanded sidebar is untouched). */
+[data-collapsible="icon"] [data-sidebar="menu-button"] {
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+[data-collapsible="icon"] [data-sidebar="menu-button"] > span {
+  display: none !important;
+}
+[data-collapsible="icon"] [data-sidebar="header"] a {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* ── Neural visual language ────────────────────────────────────────────────
    Hand-rolled keyframes (no libs) shared by the brain surfaces so the whole
    console reads as one living organism: brains are glowing neural cells whose

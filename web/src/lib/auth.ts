@@ -3,6 +3,7 @@
 // double-submit token. When a login also returns a JWT we cache it and attach it
 // as `Authorization: Bearer` on brain API calls (belt-and-suspenders with the
 // cookie, and the posture the auth Middleware accepts for either transport).
+import type { AuthClient, LoginResult, OtpResult, Verify2FAResult } from "@togo-framework/ui";
 import { API } from "./api";
 
 // --- Bearer token store (JWT from a credential login; dev-login is cookie-only) ---
@@ -34,21 +35,39 @@ export function setStoredUser(u: Me | null) {
 }
 
 async function csrf(): Promise<string> {
-  const res = await fetch(`${API}/api/auth/csrf`, { credentials: "include" });
+  // no-store: the token rotates per request and each GET re-issues the cookie —
+  // a cached response would hand back a token that no longer matches the cookie.
+  const res = await fetch(`${API}/api/auth/csrf`, { credentials: "include", cache: "no-store" });
   const data = await res.json().catch(() => ({}));
   return data.csrf_token ?? "";
 }
 
-async function post<T = any>(path: string, body?: unknown): Promise<T> {
+// One POST attempt: fetch a FRESH csrf token+cookie, then submit with the
+// double-submit header. Each call re-issues the cookie, so a retry naturally
+// recovers from a stale/rotated togo_csrf cookie.
+async function postOnce(path: string, body?: unknown): Promise<Response> {
   const token = await csrf();
-  const res = await fetch(`${API}/api/auth/${path}`, {
+  return fetch(`${API}/api/auth/${path}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+    // authHeaders() attaches the Bearer JWT when we hold one — authed POSTs
+    // (e.g. change-password) work even if the session cookie is finicky, and the
+    // server exempts Bearer requests from CSRF. Harmless on login (no token yet).
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token, ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+async function post<T = any>(path: string, body?: unknown): Promise<T> {
+  let res = await postOnce(path, body);
+  // 403 here is almost always a stale/mismatched CSRF cookie (e.g. after a
+  // backend restart or a cookie left over from an earlier session). Re-issue the
+  // token+cookie and retry once before surfacing the error.
+  if (res.status === 403) res = await postOnce(path, body);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || data.detail || `request failed (${res.status})`);
+  if (!res.ok) {
+    throw Object.assign(new Error(data.error || data.detail || `request failed (${res.status})`), { status: res.status });
+  }
   return data as T;
 }
 
@@ -87,6 +106,9 @@ export const auth = {
   logout: async () => {
     try { await post("logout"); } finally { clearToken(); setStoredUser(null); clearSession(); }
   },
+  // Change the signed-in user's password (requires an active session/token).
+  changePassword: (oldPassword: string, newPassword: string) =>
+    post("change-password", { old_password: oldPassword, new_password: newPassword }),
   // Resolve the current identity for page-load hydration. Prefer the server's
   // /api/auth/me when it exists and answers JSON; otherwise fall back to the user
   // persisted at login (so a refresh keeps the session while a valid token is held).
@@ -112,6 +134,54 @@ export const auth = {
   requestOtp: (email: string, purpose = "reset") => post("otp", { email, purpose }),
   verifyOtp: (email: string, code: string, purpose = "reset") => post("otp/verify", { email, code, purpose }),
 };
+
+// --- togo auth UI adapter ----------------------------------------------------
+// The @togo-framework/ui <AuthFlow> is UI-only: it drives an app-provided
+// AuthClient (the "transport seam"). We map its methods onto the existing
+// /api/auth/* transport above so the standard togo login UI works unchanged.
+// `dev` gates the optional devLogin — LoginForm renders the "Continue as dev"
+// button ONLY when the client exposes devLogin, so we attach it in dev only.
+export function makeAuthClient(opts: { dev?: boolean } = {}): AuthClient {
+  const client: AuthClient = {
+    async login(email, password, rememberMe): Promise<LoginResult> {
+      const d = await post<AuthResult & { challenge?: string; challenge_token?: string }>(
+        "login", { email, password, remember_me: !!rememberMe },
+      );
+      if (d?.token) setToken(d.token);
+      if (d?.challenge === "otp" || d?.challenge === "2fa") {
+        return { challenge: d.challenge, challenge_token: d.challenge_token };
+      }
+      setStoredUser(d?.user ?? null); clearSession();
+      return { challenge: "none" };
+    },
+    async sendOtp(email) { await post("otp", { email, purpose: "login" }); },
+    async verifyOtp(email, code, challengeToken): Promise<OtpResult> {
+      const d = await post<AuthResult & { challenge?: string; challenge_token?: string }>(
+        "otp/verify", { email, code, challenge_token: challengeToken, purpose: "login" },
+      );
+      if (d?.token) setToken(d.token);
+      if (d?.challenge === "2fa") return { challenge: "2fa", challenge_token: d.challenge_token };
+      setStoredUser(d?.user ?? null); clearSession();
+      return { challenge: "none" };
+    },
+    // CaBrain only offers password (+ dev) login — there is no mail service for
+    // magic-link/OTP here. Returning just email_password stops <AuthFlow> from
+    // rendering the "Send magic link" / "Email me a code" options.
+    async getLoginMethods() { return { methods: ["email_password"] }; },
+    async forgotPassword(email) { await post("otp", { email, purpose: "reset" }); },
+    async resetPassword(token, newPassword) { await post("reset", { token, password: newPassword }); },
+    async verify2FA(code, challengeToken): Promise<Verify2FAResult> {
+      const d = await post<AuthResult>("2fa/verify", { code, challenge_token: challengeToken });
+      if (d?.token) setToken(d.token);
+      setStoredUser(d?.user ?? null); clearSession();
+      return { challenge: "none" };
+    },
+  };
+  if (opts.dev) {
+    client.devLogin = async () => { await auth.devLogin(); };
+  }
+  return client;
+}
 
 // Session cache so the router's guards resolve /me once per navigation pass
 // instead of re-fetching on every route. Clear it after login/logout/register.

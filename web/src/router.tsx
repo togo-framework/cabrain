@@ -17,6 +17,7 @@ import { BrainActivity } from "./routes/brain-activity";
 import { BrainWorkspacePermissions } from "./routes/brain-workspace-permissions";
 import { BrainUsers } from "./routes/brain-users";
 import { BrainPermissions } from "./routes/brain-permissions";
+import { ProfilePage } from "./routes/profile-page";
 
 // CaBrain memory console — everything is wired over the brain. The BRAIN is the
 // main entry: "/" is the Brains hub, each brain opens a scoped workspace at
@@ -47,6 +48,8 @@ function useNamespace(): string {
 // ── Hub (the entry point) ────────────────────────────────────────────────────
 const hubLayoutRoute = createRoute({ getParentRoute: () => rootRoute, id: "_hub", component: HubLayout });
 const hubIndexRoute = createRoute({ getParentRoute: () => hubLayoutRoute, path: "/", component: BrainsHub });
+// User profile & settings — rendered inside the hub chrome (sidebar + header).
+const profileRoute = createRoute({ getParentRoute: () => hubLayoutRoute, path: "/profile", component: ProfilePage });
 
 // Old flat nav → sensible redirects so deep links don't break.
 const mkRedirect = (path: string, to: string) =>
@@ -92,7 +95,7 @@ const adminTokensRoute = createRoute({ getParentRoute: () => adminLayoutRoute, p
 const adminSearchRoute = createRoute({ getParentRoute: () => adminLayoutRoute, path: "/search", component: () => <BrainSearch /> });
 
 const routeTree = rootRoute.addChildren([
-  hubLayoutRoute.addChildren([hubIndexRoute]),
+  hubLayoutRoute.addChildren([hubIndexRoute, profileRoute]),
   ...redirects,
   workspaceLayoutRoute.addChildren([
     wsOverviewRoute, wsChatRoute, wsSearchRoute, wsSourcesRoute, wsSessionsRoute, wsSecretsRoute,

@@ -8,6 +8,7 @@ import {
 import { LiveIndicator } from "../lib/realtime";
 import { NeuralGlyph, NeuralBackdrop } from "../components/neural";
 import { UserMenu } from "../components/chrome";
+import { useSidebarState } from "../lib/sidebar";
 
 // The brain hub is the entry point. Its sidebar is deliberately small: the Brains
 // hub itself, plus an Admin group (users, tokens, cross-brain search) kept out of
@@ -26,9 +27,10 @@ export function HubLayout() {
   const nav = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isActive = (to: string, exact?: boolean) => (exact ? pathname === to : pathname.startsWith(to));
+  const sidebar = useSidebarState();
 
   return (
-    <SidebarProvider>
+    <SidebarProvider open={sidebar.open} onOpenChange={sidebar.setOpen}>
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <Link to="/" className="flex items-center gap-2 px-2 py-1.5">

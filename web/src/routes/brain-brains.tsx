@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes, Plus, Search, Rocket, Download, Trash2, MoreHorizontal,
   ArrowRight, HelpCircle, LayoutGrid, List, Waypoints, Activity, Lock, Loader2,
+  BrainCircuit, Database, Tags, Clock, CheckCircle2,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Button, Input, Badge, StatusBadge, StatCard, PageHeader, EmptyState, Skeleton,
@@ -36,21 +38,21 @@ function relTime(iso?: string): string {
 
 function nf(n?: number) { return (n ?? 0).toLocaleString(); }
 
-/** A restrained per-brain identity monogram — a tinted tile in the brain's own
- *  stable hue. Identity without the rainbow: one accent, low chroma, no glow. */
+/** A restrained per-brain identity tile — the brain glyph tinted in the brain's own
+ *  stable hue. Identity via one accent colour (low chroma, no glow), not a letter. */
 export function BrainAvatar({ namespace, size = 40 }: { namespace: string; size?: number }) {
   const c = hueForBrain(namespace);
   return (
     <span
       aria-hidden
-      className="flex shrink-0 items-center justify-center rounded-lg font-semibold uppercase"
+      className="flex shrink-0 items-center justify-center rounded-xl"
       style={{
-        height: size, width: size, fontSize: size * 0.42,
+        height: size, width: size,
         color: c, background: `color-mix(in srgb, ${c} 14%, transparent)`,
         border: `1px solid color-mix(in srgb, ${c} 30%, transparent)`,
       }}
     >
-      {namespace.slice(0, 1)}
+      <BrainCircuit style={{ height: size * 0.5, width: size * 0.5 }} />
     </span>
   );
 }
@@ -212,46 +214,63 @@ function useDetail(namespace: string) {
   return q.data && !q.data.error ? (q.data as BrainDetail) : undefined;
 }
 
-function Metric({ value, label }: { value: string; label: string }) {
+function Metric({ icon: Icon, value, label }: { icon: LucideIcon; value: string; label: string }) {
   return (
-    <div className="min-w-0">
-      <div className="truncate text-lg font-semibold tabular-nums leading-tight text-foreground">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+    <div className="flex min-w-0 items-center gap-2">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold tabular-nums leading-none text-foreground">{value}</div>
+        <div className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      </div>
     </div>
   );
 }
 
 function BrainCard({ b, onLaunch, onDelete }: { b: NamespaceInfo; onLaunch: () => void; onDelete: () => void }) {
   const d = useDetail(b.namespace);
+  const c = hueForBrain(b.namespace);
   return (
-    <div className="group relative flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/40 focus-within:border-primary/50">
+    <div className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-within:border-primary/50">
+      {/* Hue accent — the brain's identity colour, shown only on hover so the grid stays calm at rest. */}
+      <span aria-hidden className="absolute inset-x-0 top-0 h-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+        style={{ background: `linear-gradient(90deg, ${c}, transparent)` }} />
       <Link
         to="/b/$namespace" params={{ namespace: b.namespace }}
         aria-label={`Open ${b.namespace}`}
         className="absolute inset-0 z-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
-      <div className="pointer-events-none relative z-10 flex items-start gap-3">
-        <BrainAvatar namespace={b.namespace} size={40} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-foreground group-hover:text-primary">{b.namespace}</div>
-          <div className="text-xs text-muted-foreground">Updated {relTime(b.lastAt)}</div>
+
+      <div className="relative z-10 flex flex-1 flex-col p-4">
+        {/* Header */}
+        <div className="pointer-events-none flex items-start gap-3">
+          <BrainAvatar namespace={b.namespace} size={44} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base font-semibold text-foreground transition-colors group-hover:text-primary">{b.namespace}</div>
+            <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" /> Updated {relTime(b.lastAt)}
+            </div>
+          </div>
+          <div className="pointer-events-auto -me-1 -mt-1"><BrainActions namespace={b.namespace} onLaunch={onLaunch} onDelete={onDelete} /></div>
         </div>
-        <div className="pointer-events-auto"><BrainActions namespace={b.namespace} onLaunch={onLaunch} onDelete={onDelete} /></div>
+
+        {/* Metrics — grouped in a quiet inset so the numbers read as one unit */}
+        <div className="pointer-events-none mt-4 grid grid-cols-3 gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+          <Metric icon={Database} value={nf(b.memories)} label="memories" />
+          <Metric icon={Activity} value={d ? nf(d.recalls) : "—"} label="recalls" />
+          <Metric icon={Tags} value={d ? nf(Object.keys(d.types).length) : "—"} label="types" />
+        </div>
+
+        <div className="pointer-events-none mt-3 min-h-[1.75rem]"><TypeTags detail={d} /></div>
       </div>
 
-      <div className="pointer-events-none relative z-10 mt-4 grid grid-cols-3 gap-2">
-        <Metric value={nf(b.memories)} label="memories" />
-        <Metric value={d ? nf(d.recalls) : "—"} label="recalls" />
-        <Metric value={d ? nf(Object.keys(d.types).length) : "—"} label="types" />
-      </div>
-
-      <div className="pointer-events-none relative z-10 mt-3 min-h-[1.75rem]"><TypeTags detail={d} /></div>
-
-      <div className="pointer-events-none relative z-10 mt-4 flex items-center justify-between border-t border-border pt-3">
+      {/* Footer */}
+      <div className="pointer-events-none relative z-10 mt-auto flex items-center justify-between border-t border-border px-4 py-3">
         {d && d.openGaps > 0
-          ? <StatusBadge tone="warning"><HelpCircle className="h-3 w-3" /> {d.openGaps} gaps</StatusBadge>
-          : <span className="text-xs text-muted-foreground">No open gaps</span>}
-        <span className="pointer-events-none inline-flex items-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-primary">
+          ? <StatusBadge tone="warning"><HelpCircle className="h-3 w-3" /> {d.openGaps} open {d.openGaps === 1 ? "gap" : "gaps"}</StatusBadge>
+          : <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> No open gaps
+            </span>}
+        <span className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors group-hover:text-primary">
           Open <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
         </span>
       </div>
@@ -259,11 +278,14 @@ function BrainCard({ b, onLaunch, onDelete }: { b: NamespaceInfo; onLaunch: () =
   );
 }
 
-function RowStat({ value, label }: { value: string; label: string }) {
+function RowStat({ icon: Icon, value, label }: { icon: LucideIcon; value: string; label: string }) {
   return (
-    <div className="text-right">
-      <div className="text-sm font-semibold tabular-nums text-foreground">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+    <div className="flex items-center gap-2" title={label}>
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="leading-none">
+        <div className="text-sm font-semibold tabular-nums text-foreground">{value}</div>
+        <div className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      </div>
     </div>
   );
 }
@@ -271,18 +293,30 @@ function RowStat({ value, label }: { value: string; label: string }) {
 function BrainRow({ b, onLaunch, onDelete }: { b: NamespaceInfo; onLaunch: () => void; onDelete: () => void }) {
   const d = useDetail(b.namespace);
   return (
-    <div className="group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/40">
+    <div className="group relative flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/40 hover:bg-accent/30">
       <Link to="/b/$namespace" params={{ namespace: b.namespace }} aria-label={`Open ${b.namespace}`} className="absolute inset-0 z-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-      <div className="pointer-events-none"><BrainAvatar namespace={b.namespace} size={34} /></div>
+      <div className="pointer-events-none"><BrainAvatar namespace={b.namespace} size={38} /></div>
       <div className="pointer-events-none min-w-0 flex-1">
         <div className="truncate font-medium text-foreground group-hover:text-primary">{b.namespace}</div>
-        <div className="truncate text-xs text-muted-foreground">Updated {relTime(b.lastAt)}</div>
+        <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+          <Clock className="h-3 w-3 shrink-0" /> {relTime(b.lastAt)}
+          {/* memories stay visible on mobile, where the stat columns are hidden */}
+          <span className="sm:hidden">· {nf(b.memories)} memories</span>
+        </div>
       </div>
+
       <div className="pointer-events-none hidden items-center gap-6 sm:flex">
-        <RowStat value={nf(b.memories)} label="memories" />
-        <RowStat value={d ? nf(d.recalls) : "—"} label="recalls" />
-        {d && d.openGaps > 0 && <StatusBadge tone="warning"><HelpCircle className="h-3 w-3" /> {d.openGaps}</StatusBadge>}
+        <RowStat icon={Database} value={nf(b.memories)} label="memories" />
+        <RowStat icon={Activity} value={d ? nf(d.recalls) : "—"} label="recalls" />
+        <RowStat icon={Tags} value={d ? nf(Object.keys(d.types).length) : "—"} label="types" />
       </div>
+
+      {d && d.openGaps > 0 && (
+        <StatusBadge tone="warning" className="pointer-events-none hidden md:inline-flex">
+          <HelpCircle className="h-3 w-3" /> {d.openGaps}
+        </StatusBadge>
+      )}
+      <ArrowRight className="pointer-events-none hidden h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover:translate-x-0.5 group-hover:text-primary sm:block" />
       <div className="relative z-20"><BrainActions namespace={b.namespace} onLaunch={onLaunch} onDelete={onDelete} /></div>
     </div>
   );
@@ -360,7 +394,7 @@ export function BrainsHub() {
       {/* Content */}
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-52 rounded-xl" />)}
         </div>
       ) : brains.length === 0 ? (
         <EmptyState

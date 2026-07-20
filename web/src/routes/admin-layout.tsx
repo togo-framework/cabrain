@@ -8,6 +8,7 @@ import {
 import { LiveIndicator } from "../lib/realtime";
 import { NeuralGlyph, NeuralBackdrop } from "../components/neural";
 import { UserMenu } from "../components/chrome";
+import { useSidebarState } from "../lib/sidebar";
 
 // Cross-brain admin, kept out of the main brain flow. Users + Tokens/ACL are the
 // global controls; a global cross-brain search lives here too.
@@ -28,9 +29,10 @@ export function AdminLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isActive = (to: string) => pathname.startsWith(to);
   const crumb = LABELS[pathname] ?? "Admin";
+  const sidebar = useSidebarState();
 
   return (
-    <SidebarProvider>
+    <SidebarProvider open={sidebar.open} onOpenChange={sidebar.setOpen}>
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <Link to="/" className="flex items-center gap-2 px-2 py-1.5" title="Back to Brains">
