@@ -332,6 +332,66 @@ func (s *Store) ventureGraph(ctx context.Context, db *sql.DB, ns string, limit i
 		}
 		erows.Close()
 	}
+
+	// Type spine: surface EVERY memory type — not just venture-linked entities — so the
+	// graph shows all the data (git-activity, code, task, learning, issue, goal, …) as
+	// root → type:<t> → sample entities. Entities already attached to a venture are
+	// reused by node id and simply gain a second edge to their type node.
+	entSeen := map[string]bool{}
+	for _, n := range g.Nodes {
+		if len(n.ID) > 4 && n.ID[:4] == "ent:" {
+			entSeen[n.ID] = true
+		}
+	}
+	trows, terr := db.QueryContext(ctx, `
+		SELECT COALESCE(NULLIF(metadata->>'type',''),'item') AS t, count(*)
+		FROM memories
+		WHERE namespace=$1 AND invalid_at IS NULL
+		      AND COALESCE(NULLIF(metadata->>'type',''),'item') <> 'venture'
+		GROUP BY 1 ORDER BY 2 DESC LIMIT 30`, ns)
+	if terr == nil {
+		types := []string{}
+		for trows.Next() {
+			var t string
+			var c int
+			if trows.Scan(&t, &c) == nil {
+				g.Nodes = append(g.Nodes, GraphNode{ID: "type:" + t, Name: t + " (" + itoa(c) + ")", Group: "type"})
+				g.Edges = append(g.Edges, GraphEdge{Source: "root", Target: "type:" + t})
+				types = append(types, t)
+			}
+		}
+		trows.Close()
+		perType := limit / 10
+		if perType < 8 {
+			perType = 8
+		}
+		if perType > 40 {
+			perType = 40
+		}
+		for _, t := range types {
+			srows, serr := db.QueryContext(ctx, `
+				SELECT id::text,
+				       left(regexp_replace(COALESCE(NULLIF(metadata->>'slug',''), NULLIF(metadata->>'path',''), NULLIF(metadata->>'file',''), content),'\s+',' ','g'), 44) AS name
+				FROM memories
+				WHERE namespace=$1 AND invalid_at IS NULL AND COALESCE(NULLIF(metadata->>'type',''),'item')=$2
+				ORDER BY valid_at DESC LIMIT `+itoa(perType), ns, t)
+			if serr != nil {
+				continue
+			}
+			for srows.Next() {
+				var id, name string
+				if srows.Scan(&id, &name) == nil {
+					nid := "ent:" + id
+					if !entSeen[nid] {
+						g.Nodes = append(g.Nodes, GraphNode{ID: nid, Name: name, Group: t})
+						entSeen[nid] = true
+					}
+					g.Edges = append(g.Edges, GraphEdge{Source: "type:" + t, Target: nid})
+				}
+			}
+			srows.Close()
+		}
+	}
 	return g, nil
 }
 
