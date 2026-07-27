@@ -170,10 +170,12 @@ func (s *server) callTool(req *rpcReq) {
 		})
 	case "memory_recall":
 		body, code, err = s.post("/api/brain/recall", map[string]any{
-			"namespace":     args["namespace"],
-			"query":         args["query"],
-			"limit":         args["limit"],
-			"expandEntity":  args["expand_entities"],
+			"namespace":          args["namespace"],
+			"query":              args["query"],
+			"limit":              args["limit"],
+			"expandEntity":       args["expand_entities"],
+			"types":              args["types"],
+			"excludeSourceKinds": args["exclude_source_kinds"],
 			"minImportance": args["min_importance"],
 		})
 	case "memory_recall_archive":

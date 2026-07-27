@@ -40,6 +40,8 @@ var toolDefs = []map[string]any{
 			"limit":           prop{"type": "integer", "description": "final N after rerank (default 8, max 50)"},
 			"expand_entities": prop{"type": "boolean", "description": "1-hop spreading activation (default true)"},
 			"min_importance":  prop{"type": "number", "description": "optional floor filter"},
+			"types":           prop{"type": "array", "items": prop{"type": "string"}, "description": "narrow to these memory_type values (e.g. [\"venture\",\"spec\",\"goal\"]) — cuts noise from bulk ingest types like git-activity"},
+			"exclude_source_kinds": prop{"type": "array", "items": prop{"type": "string"}, "description": "drop candidates from these source_kind streams (e.g. [\"flowos_github_activity\"]) to muffle high-volume noise"},
 		}, "namespace", "query"),
 	},
 	{

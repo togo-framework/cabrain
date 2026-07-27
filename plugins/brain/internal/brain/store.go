@@ -1,15 +1,18 @@
 package brain
 
 import (
+
+
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/togo-framework/togo"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/togo-framework/togo"
 )
 
 // metaJSON marshals a metadata map to a JSON string for the jsonb column (nil → NULL).
@@ -232,11 +235,19 @@ func (n *neighbor) simImportance(hint float64) float64 {
 // --- recall (SPEC §4.2) -------------------------------------------------------
 
 type RecallQuery struct {
-	Namespace     string  `json:"namespace"`
-	Query         string  `json:"query"`
-	Limit         int     `json:"limit"`        // final N after rerank (default 8)
-	ExpandEntity  bool    `json:"expandEntity"` // 1-hop spreading activation
-	MinImportance float64 `json:"minImportance"`
+	Namespace     string   `json:"namespace"`
+	Query         string   `json:"query"`
+	Limit         int      `json:"limit"`        // final N after rerank (default 8)
+	ExpandEntity  bool     `json:"expandEntity"` // 1-hop spreading activation
+	MinImportance float64  `json:"minImportance"`
+	// Types narrows candidates to these memory_type values (empty = no filter).
+	// Use to scope recall semantically, e.g. Types=["venture","spec","goal"] when
+	// the caller wants project descriptions rather than commit-count episodics.
+	Types []string `json:"types,omitempty"`
+	// ExcludeSourceKinds drops candidates whose source_kind is in this list. Use
+	// to muffle noisy ingest streams (e.g. flowos_github_activity) that would
+	// otherwise dominate the pool.
+	ExcludeSourceKinds []string `json:"excludeSourceKinds,omitempty"`
 }
 
 type Recalled struct {
@@ -287,9 +298,13 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	// still works, just without lexical fusion. Pull a wide pool; rerank narrows it.
 	const poolSize = 40
 	vec := vecLit(vecs[0])
-	pool, err := s.recallPool(ctx, db, recallSQL, vec, q.Namespace, q.Query, poolSize, q.MinImportance, bm25Tokenizer())
+	sqlHybrid, argsHybrid := buildFilteredRecallSQL(recallSQL, 6, q.Types, q.ExcludeSourceKinds)
+	hybridArgs := append([]any{vec, q.Namespace, q.Query, poolSize, q.MinImportance, bm25Tokenizer()}, argsHybrid...)
+	pool, err := s.recallPool(ctx, db, sqlHybrid, hybridArgs...)
 	if err != nil {
-		pool, err = s.recallPool(ctx, db, recallVecSQL, vec, q.Namespace, poolSize, q.MinImportance)
+		sqlVec, argsVec := buildFilteredRecallSQL(recallVecSQL, 4, q.Types, q.ExcludeSourceKinds)
+		vecArgs := append([]any{vec, q.Namespace, poolSize, q.MinImportance}, argsVec...)
+		pool, err = s.recallPool(ctx, db, sqlVec, vecArgs...)
 		if err != nil {
 			return nil, errors.New("brain.Recall: query: " + err.Error())
 		}
