@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +14,59 @@ import (
 
 	"github.com/togo-framework/cabrain/internal/server"
 )
+
+// ensureAuthSecret guarantees a >=32-byte AUTH_SECRET before Boot(), so the togo
+// auth plugin's fail-closed production check can never silently take /api/auth/*
+// offline after a bare restart when /deploy/.env forgot to set one. Priority:
+// env → persistent file → generate+persist. Env value always wins.
+func ensureAuthSecret() {
+	if s := os.Getenv("AUTH_SECRET"); len(s) >= 32 {
+		return
+	}
+	candidates := []string{}
+	if m := os.Getenv("MEDIA_DIR"); m != "" {
+		candidates = append(candidates, m)
+	}
+	if c := os.Getenv("COLD_STORE_LOCAL_DIR"); c != "" {
+		candidates = append(candidates, c)
+	}
+	candidates = append(candidates,
+		"/app/data",
+		"/app/web/dist-media",
+		"/var/lib/cabrain",
+		"/tmp",
+	)
+	var secretFile string
+	for _, d := range candidates {
+		if err := os.MkdirAll(d, 0700); err == nil {
+			secretFile = filepath.Join(d, ".auth_secret")
+			break
+		}
+	}
+	if secretFile != "" {
+		if b, err := os.ReadFile(secretFile); err == nil {
+			v := strings.TrimSpace(string(b))
+			if len(v) >= 32 {
+				os.Setenv("AUTH_SECRET", v)
+				fmt.Printf("→ loaded AUTH_SECRET from %s (env was empty/short)\n", secretFile)
+				return
+			}
+		}
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		panic("cannot generate AUTH_SECRET: " + err.Error())
+	}
+	v := hex.EncodeToString(buf)
+	os.Setenv("AUTH_SECRET", v)
+	if secretFile != "" {
+		if err := os.WriteFile(secretFile, []byte(v), 0600); err == nil {
+			fmt.Printf("→ generated AUTH_SECRET → %s (stable across restarts)\n", secretFile)
+			return
+		}
+	}
+	fmt.Println("→ generated ephemeral AUTH_SECRET (no persistent dir writable; sessions reset on restart)")
+}
 
 // serveSPA serves the built frontend (web/dist) from the same binary: real files
 // are served directly, unknown paths fall back to index.html (client routing).
@@ -64,6 +119,8 @@ func main() {
 		os.Stdout.Write(b)
 		return
 	}
+
+	ensureAuthSecret()
 
 	a := server.Boot()
 	defer a.Kernel.Close()
