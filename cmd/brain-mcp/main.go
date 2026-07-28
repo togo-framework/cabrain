@@ -187,6 +187,11 @@ func (s *server) callTool(req *rpcReq) {
 	case "memory_get":
 		body, code, err = s.get("/api/brain/memory", url.Values{
 			"namespace": {str(args["namespace"])}, "id": {str(args["id"])}})
+	case "memory_dedup":
+		body, code, err = s.post("/api/brain/dedup", map[string]any{
+			"namespace":  args["namespace"],
+			"sourceKind": args["sourceKind"],
+		})
 	case "memory_forget":
 		body, code, err = s.post("/api/brain/forget", map[string]any{
 			"namespace": args["namespace"], "id": args["id"], "reason": args["reason"]})

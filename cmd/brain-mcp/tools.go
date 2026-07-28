@@ -64,6 +64,14 @@ var toolDefs = []map[string]any{
 		}, "namespace", "id"),
 	},
 	{
+		"name":        "memory_dedup",
+		"description": "Soft-invalidate duplicate memories in a namespace (same source_ref → keep newest only). Optional sourceKind narrows to one ingest stream (e.g. \"flowos_github_activity\"). Returns the count of rows invalidated. Write-checked.",
+		"inputSchema": obj(prop{
+			"namespace":  prop{"type": "string"},
+			"sourceKind": prop{"type": "string", "description": "optional; empty = all source_kinds"},
+		}, "namespace"),
+	},
+	{
 		"name":        "memory_forget",
 		"description": "Soft-invalidate a memory (sets invalid_at=now(); never hard-deletes — history stays queryable). Write-checked.",
 		"inputSchema": obj(prop{

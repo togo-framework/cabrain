@@ -114,6 +114,7 @@ func init() {
 		k.Router.Post("/api/brain/retain", secured(svc.Retain))
 		k.Router.Get("/api/brain/memory", secured(svc.Get))
 		k.Router.Post("/api/brain/forget", secured(svc.Forget))
+		k.Router.Post("/api/brain/dedup", secured(svc.Dedup))
 		k.Router.Post("/api/brain/share", secured(svc.Share))
 		k.Router.Get("/api/brain/gaps", secured(svc.Gaps))
 		k.Router.Post("/api/brain/gaps/resolve", secured(svc.ResolveGap))

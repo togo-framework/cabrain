@@ -232,6 +232,35 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+
+// POST /api/brain/dedup  { namespace, sourceKind? }
+// Soft-invalidate duplicate memories in a namespace (same source_ref → keep newest).
+// Requires write access on the namespace.
+func (s *Service) Dedup(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		Namespace  string `json:"namespace"`
+		SourceKind string `json:"sourceKind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "bad JSON body"))
+		return
+	}
+	if q.Namespace == "" {
+		writeJSON(w, http.StatusBadRequest, apiErr("invalid_argument", "namespace is required"))
+		return
+	}
+	if !s.canWrite(r, q.Namespace) {
+		writeJSON(w, http.StatusForbidden, apiErr("permission_denied", "no write access to brain "+q.Namespace))
+		return
+	}
+	n, err := s.Store.DedupSource(r.Context(), q.Namespace, q.SourceKind)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, unavailable(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"namespace": q.Namespace, "sourceKind": q.SourceKind, "invalidated": n})
+}
+
 // POST /api/brain/forget  { namespace, id, reason }   (memory_forget)
 func (s *Service) Forget(w http.ResponseWriter, r *http.Request) {
 	var in struct{ Namespace, ID, Reason string }

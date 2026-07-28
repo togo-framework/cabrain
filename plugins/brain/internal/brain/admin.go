@@ -253,3 +253,46 @@ func (s *Store) EditMemory(ctx context.Context, ns, id, content string, importan
 	s.bumpEpoch(ns)
 	return nil
 }
+
+
+// DedupSource soft-invalidates duplicate memories in a namespace that share the
+// same source_ref, keeping only the newest per source_ref. Set sourceKind to
+// scope the sweep to one stream (e.g. "flowos_github_activity"); pass "" to
+// dedup across every source_kind. Returns the number of rows invalidated.
+//
+// Fixes the class of noise where a stuck ingester keeps re-writing the same
+// (day, org, repo, author) record with a new memory id every day — the brain
+// then has 3000+ identical entries dominating recall.
+func (s *Store) DedupSource(ctx context.Context, ns, sourceKind string) (int, error) {
+	db, err := s.db(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if ns == "" {
+		return 0, nil
+	}
+	const sql = `
+		WITH dupes AS (
+		  SELECT id
+		  FROM (
+		    SELECT id,
+		           ROW_NUMBER() OVER (PARTITION BY source_ref ORDER BY valid_at DESC) AS rn
+		    FROM memories
+		    WHERE namespace = $1
+		      AND invalid_at IS NULL
+		      AND COALESCE(source_ref,'') <> ''
+		      AND ($2 = '' OR COALESCE(source_kind,'') = $2)
+		  ) r
+		  WHERE r.rn > 1
+		)
+		UPDATE memories m
+		SET invalid_at = now(),
+		    metadata = COALESCE(m.metadata, '{}'::jsonb) || jsonb_build_object('forget_reason','dedup:source_ref')
+		WHERE m.id IN (SELECT id FROM dupes)`
+	res, err := db.ExecContext(ctx, sql, ns, sourceKind)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
