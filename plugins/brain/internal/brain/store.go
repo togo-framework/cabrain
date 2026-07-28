@@ -441,3 +441,45 @@ func errStr(err error) string {
 	}
 	return err.Error()
 }
+
+// buildFilteredRecallSQL splices optional type / exclude-source-kind filters
+// into the base recallSQL / recallVecSQL, returning the modified SQL and the
+// extra args to append after the base positional args. baseArgCount is the
+// number of positional args the base SQL already consumes ($1..$baseArgCount);
+// new filters get $baseArgCount+1 onwards.
+//
+// Type filter targets metadata->>'type' — the JSON field set by ingest (person,
+// venture, goal, spec, …) that admin.go's brain_details also groups on. NOT the
+// enum memory_type column (which is episodic/semantic/procedural — too coarse
+// to distinguish a person memory from a git-activity one).
+//
+// Filters are injected into every CTE that scans memories, so pre-rerank
+// candidates are already narrowed. Zero-cost when both filters are empty.
+func buildFilteredRecallSQL(base string, baseArgCount int, types, exclude []string) (string, []any) {
+	if len(types) == 0 && len(exclude) == 0 {
+		return base, nil
+	}
+	var extraArgs []any
+	next := baseArgCount + 1
+	injection := ""
+	if len(types) > 0 {
+		phs := make([]string, len(types))
+		for i, t := range types {
+			phs[i] = fmt.Sprintf("$%d", next)
+			extraArgs = append(extraArgs, t)
+			next++
+		}
+		injection += " AND COALESCE(NULLIF(metadata->>'type',''),'item') IN (" + strings.Join(phs, ",") + ")"
+	}
+	if len(exclude) > 0 {
+		phs := make([]string, len(exclude))
+		for i, s := range exclude {
+			phs[i] = fmt.Sprintf("$%d", next)
+			extraArgs = append(extraArgs, s)
+			next++
+		}
+		injection += " AND COALESCE(source_kind,'') NOT IN (" + strings.Join(phs, ",") + ")"
+	}
+	anchor := "tier = 'hot'"
+	return strings.ReplaceAll(base, anchor, anchor+injection), extraArgs
+}
