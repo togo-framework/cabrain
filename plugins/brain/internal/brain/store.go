@@ -90,6 +90,45 @@ type MemoryInput struct {
 	ImportanceHint float64 // optional caller salience flag, blended, not authoritative
 	OwnerAgentID   string
 	Metadata       map[string]any // free-form; stored as jsonb (type, slug, tags, …)
+
+	// ValidAt is the EVENT time of the memory (when the thing happened), not the
+	// ingest time. Nil → now(), which is right for a live observation but WRONG
+	// for backfilled records: without it every imported post/goal/issue lands with
+	// the same timestamp and "what shipped last week?" becomes unanswerable — the
+	// store has no way to order them. Set it whenever you are importing something
+	// that already has a creation date at the source.
+	ValidAt *time.Time
+}
+
+// UnmarshalJSON accepts BOTH camelCase and snake_case keys. The struct has no
+// json tags, so Go's case-insensitive matching binds "sourceKind" but silently
+// DROPS "source_kind" — which is what the cabrain-agents client sends, so every
+// memory an agent retained lost its provenance. Normalising here fixes that
+// without breaking the camelCase callers (cmd/brain-mcp) already in the field.
+func (m *MemoryInput) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	norm := make(map[string]json.RawMessage, len(raw))
+	for k, v := range raw {
+		norm[strings.ToLower(strings.ReplaceAll(k, "_", ""))] = v
+	}
+	get := func(name string, dst any) {
+		if v, ok := norm[name]; ok {
+			_ = json.Unmarshal(v, dst)
+		}
+	}
+	get("namespace", &m.Namespace)
+	get("content", &m.Content)
+	get("sourcekind", &m.SourceKind)
+	get("sourceref", &m.SourceRef)
+	get("visibility", &m.Visibility)
+	get("importancehint", &m.ImportanceHint)
+	get("owneragentid", &m.OwnerAgentID)
+	get("metadata", &m.Metadata)
+	get("validat", &m.ValidAt)
+	return nil
 }
 
 type RetainResult struct {
@@ -162,16 +201,22 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 		_, _ = db.ExecContext(ctx, `UPDATE memories SET invalid_at = now() WHERE id = $1 AND invalid_at IS NULL`, relatedID)
 	}
 
+	// valid_at is the partition key, so the event time has to be supplied at INSERT
+	// (moving a row between partitions later is expensive). NULL → now().
+	var validAt any
+	if in.ValidAt != nil && !in.ValidAt.IsZero() {
+		validAt = *in.ValidAt
+	}
 	var id string
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO memories
 		  (namespace, owner_agent_id, visibility, network, memory_type, content,
-		   source_kind, source_ref, embedding, importance, tier, metadata)
+		   source_kind, source_ref, embedding, importance, tier, metadata, valid_at)
 		VALUES ($1,$2,$3,'experience','episodic',$4,$5,$6,$7::vector,$8,'hot',
-		        COALESCE($9::jsonb,'{}'::jsonb))
+		        COALESCE($9::jsonb,'{}'::jsonb), COALESCE($10::timestamptz, now()))
 		RETURNING id`,
 		in.Namespace, nullStr(in.OwnerAgentID), vis, in.Content,
-		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp, metaJSON(in.Metadata),
+		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp, metaJSON(in.Metadata), validAt,
 	).Scan(&id)
 	if err != nil {
 		return nil, errors.New("brain.Retain: insert: " + err.Error())
