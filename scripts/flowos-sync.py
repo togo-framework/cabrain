@@ -119,9 +119,13 @@ QUERIES = [
 
 ("portfolios", "flowos_portfolio", "portfolio", """
  SELECT p.id, p.created_at,
-   'FlowOS Portfolio: '||initcap(p.name)||'. '||COALESCE(p.description,'')||
+   'FlowOS Portfolio: '||initcap(p.name)||
+   COALESCE(' (also known as '||a.alias||'. '||a.alias||' and '||initcap(p.name)||
+            ' are the SAME portfolio — any question about '||a.alias||' refers to '||initcap(p.name)||'.)','')||
+   '. '||COALESCE(p.description,'')||
    '. Ventures: '||COALESCE((SELECT string_agg(v.name,', ' ORDER BY v.name) FROM ventures v WHERE v.portfolio_id=p.id),'none')
- FROM portfolios p"""),
+ FROM portfolios p
+ LEFT JOIN (VALUES ('turif','BIV')) AS a(pid, alias) ON a.pid = p.id"""),
 
 ("decisions", "flowos_decision", "decision", """
  SELECT d.id, COALESCE(d.decided_at,d.created_at),
