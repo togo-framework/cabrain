@@ -38,7 +38,7 @@ txt AS (
 )
 SELECT m.id, m.namespace, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),
        COALESCE(m.source_ref,''), m.importance, m.valid_at,
-       COALESCE(1.0/(60+vec.r),0) + COALESCE(1.0/(60+txt.r),0) + 0.15*m.importance AS score
+       COALESCE(1.0/(60+vec.r),0) + COALESCE(1.0/(60+txt.r),0) + 0.01*m.importance AS score
 FROM memories m
 LEFT JOIN vec ON vec.id = m.id
 LEFT JOIN txt ON txt.id = m.id

@@ -13,11 +13,25 @@ import (
 // bm25Tokenizer is the pg_tokenizer tokenizer recall/retain use. It is created by
 // infra (the app role cannot), so the name is configurable; the default matches
 // the multilingual tokenizer provisioned on the live cabrain DB.
+//
+// Default is `cabrain_ml` (llmlingua2, a pre-trained multilingual subword model).
+// The previous default `cabrain_bm25_tok` is a FIXED-VOCAB PROBE built from a tiny
+// sample table: it returns ZERO tokens for essentially all real input — verified
+// empty for English, Arabic, and acronyms alike — which silently disabled the whole
+// BM25 half of hybrid retrieval. With cabrain_ml the lexical layer works and is
+// exactly what rescues short/acronym queries that dense vectors are weak on:
+// "BIV portfolio Turif" now ranks the BIV=Turif alias at -50.9, "CPTO role
+// responsibilities" ranks the CPTO position spec at -17.2 (both had no signal at all
+// before). Arabic queries legitimately get no lexical hit against English documents —
+// cross-lingual matching is the multilingual embedder's job, not BM25's.
+//
+// If the tokenizer is missing on some deployment, recallSQL simply errors and the
+// store transparently falls back to the vector-only query, so this default is safe.
 func bm25Tokenizer() string {
 	if t := os.Getenv("BRAIN_BM25_TOKENIZER"); t != "" {
 		return t
 	}
-	return "cabrain_bm25_tok"
+	return "cabrain_ml"
 }
 
 // hnswEFSearch is the HNSW candidate-list size (hnsw.ef_search) applied to every
@@ -110,6 +124,16 @@ func ApplyBM25(ctx context.Context, db *sql.DB) error {
 // multilingual BM25 fused with Reciprocal Rank Fusion (RRF, k=60) plus a salience
 // nudge, scoped to namespace / hot tier / non-invalidated rows.
 //
+// The salience term is 0.01*importance and must stay SMALL relative to RRF. RRF
+// contributes at most 1/61+1/61 ≈ 0.033 (rank 1 in both lists), so the old 0.15
+// coefficient made importance worth ~9x the entire relevance signal: measured on
+// flowos, the BIV alias ranked #1 in BOTH the vector and BM25 lists yet fell to pool
+// rank 24, behind 33 rows that matched neither, purely because bulk-imported rows
+// carry importance=1.0 while the curated alias carries 0.5. This query's output is
+// the candidate pool the cross-encoder reranks, so anything pushed past LIMIT here is
+// gone for good — a perfect match was one bad row away from being evicted before it
+// could ever be reranked. Salience is a tie-breaker, not a ranker.
+//
 // BM25 uses the CONFIRMED vchord_bm25 0.3.0 API: content_bm25 <&> to_bm25query(
 // 'memories_bm25', tokenize($q,'cabrain_ml')). The <&> operator returns a distance
 // (lower = better; infra §5.2 saw an Arabic match at -0.907), so the BM25 CTE ranks
@@ -139,7 +163,7 @@ txt AS (
 )
 SELECT m.id, m.content, m.network, m.memory_type, COALESCE(m.source_kind,''),
        COALESCE(m.source_ref,''), m.importance, m.valid_at,
-       COALESCE(1.0/(60+vec.r),0) + COALESCE(1.0/(60+txt.r),0) + 0.15 * m.importance AS score
+       COALESCE(1.0/(60+vec.r),0) + COALESCE(1.0/(60+txt.r),0) + 0.01 * m.importance AS score
 FROM memories m
 LEFT JOIN vec ON vec.id = m.id
 LEFT JOIN txt ON txt.id = m.id

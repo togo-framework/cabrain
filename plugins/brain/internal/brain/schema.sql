@@ -98,8 +98,29 @@ CREATE TABLE IF NOT EXISTS memories_default PARTITION OF memories DEFAULT;
 -- Dense vector: pgvector HNSW is the working default. For the SPEC's off-box index build
 -- + horizontal scale (N3), swap to VectorChord's vchordrq index once the hot set is large:
 --   CREATE INDEX memories_vec ON memories USING vchordrq (embedding vector_cosine_ops);
-CREATE INDEX IF NOT EXISTS memories_vec
-  ON memories USING hnsw (embedding vector_cosine_ops);
+--
+-- PARTIAL, on the live rows only — this is load-bearing, not an optimization.
+-- Every ANN query in the brain (recall, cross-brain search, and topNeighbor on the
+-- retain/write-decision path) filters `invalid_at IS NULL AND tier='hot'`. A FULL
+-- index over every row is post-filtered AFTER the ANN scan, so once most rows are
+-- superseded the candidate list is gutted before the query ever sees it: on the live
+-- brain (85% superseded) a full index returned 12 of 40 requested rows at the default
+-- ef_search — and ZERO for some query vectors, which silently made memories that
+-- demonstrably existed unrecallable. Restricting the index to live rows removes the
+-- post-filter entirely: VERIFIED 40/40 rows at the default ef_search=40, at lower
+-- planner cost, and the index is ~60% smaller.
+--
+-- Keep the predicate in sync with the queries in schema.go/search.go/store.go — if it
+-- ever stops matching theirs, the planner silently falls back to a seq scan.
+CREATE INDEX IF NOT EXISTS memories_vec_live
+  ON memories USING hnsw (embedding vector_cosine_ops)
+  WHERE invalid_at IS NULL AND tier = 'hot';
+
+-- Retire the old full-table index. It is strictly redundant (no ANN query omits the
+-- predicate above) AND actively harmful: while it exists the planner keeps choosing it
+-- over the partial one, reintroducing the post-filter starvation. Dropped only AFTER
+-- the partial index above exists, so there is never a window without a vector index.
+DROP INDEX IF EXISTS memories_vec;
 
 -- [V1] BM25 long-text, Arabic-capable — CONFIRMED API for vchord_bm25 0.3.0 +
 -- pg_tokenizer 0.1.1 on the live cabrain DB. Applied by bm25.sql (separate, so a
