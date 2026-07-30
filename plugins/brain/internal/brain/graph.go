@@ -138,7 +138,7 @@ WITH RECURSIVE walk(id, name, entity_type, summary, depth, path, via) AS (
   %s
   WHERE w.depth < $3 AND ne.namespace = $1 AND NOT ne.name = ANY(w.path) %s
 )
-SELECT DISTINCT ON (id) id::text, name, entity_type, summary, depth, path, via
+SELECT DISTINCT ON (id) id::text, name, entity_type, summary, depth, array_to_string(path, chr(31)), via
 FROM walk
 WHERE depth > 0 %s
 ORDER BY id, depth
@@ -152,11 +152,16 @@ LIMIT %s`, join, edgeWhere, typeWhere, limitPh)
 	out := []TraversalNode{}
 	for rows.Next() {
 		var n TraversalNode
-		var path []string
+		// database/sql cannot scan a Postgres text[] into []string without a
+		// driver-specific array wrapper — every row silently failed its Scan and was
+		// skipped, so traversals returned zero nodes. Join in SQL, split here.
+		var path string
 		if err := rows.Scan(&n.ID, &n.Name, &n.Type, &n.Summary, &n.Depth, &path, &n.Via); err != nil {
 			continue
 		}
-		n.Path = path
+		if path != "" {
+			n.Path = strings.Split(path, "\x1f")
+		}
 		n.Distance = 1.0 / float64(1+n.Depth) // closer = higher, for distance-reranking
 		out = append(out, n)
 	}
@@ -212,7 +217,7 @@ func (s *Store) ShortestPath(ctx context.Context, ns, from, to string, maxDepth 
 	if maxDepth <= 0 || maxDepth > 6 {
 		maxDepth = 4
 	}
-	var path []string
+	var joined string
 	err = db.QueryRowContext(ctx, `
 WITH RECURSIVE walk(id, name, depth, path) AS (
   SELECT id, name, 0, ARRAY[name] FROM entities WHERE namespace=$1 AND name=$2
@@ -223,11 +228,14 @@ WITH RECURSIVE walk(id, name, depth, path) AS (
   JOIN entities ne ON ne.id = CASE WHEN e.src_id = w.id THEN e.dst_id ELSE e.src_id END
   WHERE w.depth < $4 AND ne.namespace = $1 AND NOT ne.name = ANY(w.path)
 )
-SELECT path FROM walk WHERE name = $3 ORDER BY depth LIMIT 1`, ns, from, to, maxDepth).Scan(&path)
+SELECT array_to_string(path, chr(31)) FROM walk WHERE name = $3 ORDER BY depth LIMIT 1`, ns, from, to, maxDepth).Scan(&joined)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return path, err
+	if err != nil || joined == "" {
+		return nil, err
+	}
+	return strings.Split(joined, "\x1f"), nil
 }
 
 // DetectCommunities assigns entities to clusters by label propagation over the
