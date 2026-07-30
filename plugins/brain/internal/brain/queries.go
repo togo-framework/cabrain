@@ -128,8 +128,10 @@ type GraphNode struct {
 	Group string `json:"group,omitempty"` // for coloring: root | type | <type>
 }
 type GraphEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Relation string `json:"relation,omitempty"` // typed relation from entity_edges
+	Fact     string `json:"fact,omitempty"`
 }
 type GraphData struct {
 	Ready   bool        `json:"ready"`
@@ -158,34 +160,71 @@ func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphD
 		return s.derivedGraph(ctx, db, namespace, limit)
 	}
 
-	nq := `SELECT id::text, name FROM entities`
+	// Nodes MUST carry entity_type as the group, otherwise every node renders as
+	// one undifferentiated blob and the explorer is unusable — a venture looks
+	// exactly like a person. (This query used to select only id+name.)
+	nq := `SELECT id::text, name, COALESCE(NULLIF(entity_type,''),'entity') FROM entities`
 	args := []any{}
 	if namespace != "" {
 		nq += ` WHERE namespace = $1`
 		args = append(args, namespace)
 	}
-	rows, err := db.QueryContext(ctx, nq+` LIMIT `+itoa(limit), args...)
+	rows, err := db.QueryContext(ctx, nq+` ORDER BY entity_type, name LIMIT `+itoa(limit), args...)
 	if err != nil {
 		return g, nil
 	}
 	defer rows.Close()
+	keep := map[string]bool{}
 	for rows.Next() {
 		var n GraphNode
-		if err := rows.Scan(&n.ID, &n.Name); err == nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.Group); err == nil {
 			g.Nodes = append(g.Nodes, n)
+			keep[n.ID] = true
 		}
 	}
-	erows, err := db.QueryContext(ctx, `
-		SELECT me1.entity_id::text, me2.entity_id::text
-		FROM memory_entities me1
-		JOIN memory_entities me2 ON me1.memory_id = me2.memory_id AND me1.entity_id < me2.entity_id
-		LIMIT `+itoa(limit))
+
+	// Prefer the TYPED graph. entity_edges holds real subject→RELATION→object
+	// triplets; memory_entities co-occurrence ("these two were mentioned in the
+	// same memory") is a much weaker signal and carries no relation name, so it is
+	// only the fallback for brains that have no typed edges yet. The co-occurrence
+	// query also had no namespace filter and joined across every brain.
+	eq := `SELECT src_id::text, dst_id::text, relation, COALESCE(fact,'')
+	       FROM entity_edges WHERE valid_to IS NULL`
+	eargs := []any{}
+	if namespace != "" {
+		eq += ` AND namespace = $1`
+		eargs = append(eargs, namespace)
+	}
+	erows, err := db.QueryContext(ctx, eq+` LIMIT `+itoa(limit*4), eargs...)
 	if err == nil {
 		defer erows.Close()
 		for erows.Next() {
 			var e GraphEdge
-			if err := erows.Scan(&e.Source, &e.Target); err == nil {
-				g.Edges = append(g.Edges, e)
+			if err := erows.Scan(&e.Source, &e.Target, &e.Relation, &e.Fact); err == nil {
+				if keep[e.Source] && keep[e.Target] { // don't emit dangling edges
+					g.Edges = append(g.Edges, e)
+				}
+			}
+		}
+	}
+	if len(g.Edges) == 0 { // fallback: co-occurrence, scoped to the namespace
+		cq := `SELECT me1.entity_id::text, me2.entity_id::text
+		       FROM memory_entities me1
+		       JOIN memory_entities me2 ON me1.memory_id = me2.memory_id AND me1.entity_id < me2.entity_id
+		       JOIN entities e1 ON e1.id = me1.entity_id`
+		cargs := []any{}
+		if namespace != "" {
+			cq += ` WHERE e1.namespace = $1`
+			cargs = append(cargs, namespace)
+		}
+		crows, cerr := db.QueryContext(ctx, cq+` LIMIT `+itoa(limit), cargs...)
+		if cerr == nil {
+			defer crows.Close()
+			for crows.Next() {
+				var e GraphEdge
+				if err := crows.Scan(&e.Source, &e.Target); err == nil && keep[e.Source] && keep[e.Target] {
+					g.Edges = append(g.Edges, e)
+				}
 			}
 		}
 	}
