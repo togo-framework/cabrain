@@ -428,6 +428,19 @@ type RecallQuery struct {
 	// to muffle noisy ingest streams (e.g. flowos_github_activity) that would
 	// otherwise dominate the pool.
 	ExcludeSourceKinds []string `json:"excludeSourceKinds,omitempty"`
+
+	// ── Temporal (bi-temporal query surface) ──────────────────────────────────
+	// Since/Until bound the EVENT time (valid_at) — "what happened last week".
+	// AsOf asks what the brain believed at a moment in time: it keeps rows whose
+	// validity window contains that instant, INCLUDING ones later superseded, so
+	// history is queryable rather than only the current truth.
+	// OrderBy "recent"/"oldest" replaces relevance ranking with time ordering,
+	// which is what "the latest N feeds" actually needs — similarity alone will
+	// happily hand back an April meeting for "this week".
+	Since   *time.Time `json:"since,omitempty"`
+	Until   *time.Time `json:"until,omitempty"`
+	AsOf    *time.Time `json:"asOf,omitempty"`
+	OrderBy string     `json:"orderBy,omitempty"` // ""|relevance | recent | oldest
 }
 
 // UnmarshalJSON decodes a RecallQuery with ExpandEntity defaulting to TRUE when
@@ -494,11 +507,11 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	// still works, just without lexical fusion. Pull a wide pool; rerank narrows it.
 	const poolSize = 40
 	vec := vecLit(vecs[0])
-	sqlHybrid, argsHybrid := buildFilteredRecallSQL(recallSQL, 6, q.Types, q.ExcludeSourceKinds)
+	sqlHybrid, argsHybrid := buildFilteredRecallSQL(recallSQL, 6, q.Types, q.ExcludeSourceKinds, &q)
 	hybridArgs := append([]any{vec, q.Namespace, q.Query, poolSize, q.MinImportance, bm25Tokenizer()}, argsHybrid...)
 	pool, err := s.recallPool(ctx, db, sqlHybrid, hybridArgs...)
 	if err != nil {
-		sqlVec, argsVec := buildFilteredRecallSQL(recallVecSQL, 4, q.Types, q.ExcludeSourceKinds)
+		sqlVec, argsVec := buildFilteredRecallSQL(recallVecSQL, 4, q.Types, q.ExcludeSourceKinds, &q)
 		vecArgs := append([]any{vec, q.Namespace, poolSize, q.MinImportance}, argsVec...)
 		pool, err = s.recallPool(ctx, db, sqlVec, vecArgs...)
 		if err != nil {
@@ -529,6 +542,15 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 			pool = append(pool, extra...)
 		}
 	}
+	// Time ordering, when the caller asked for it. Applied AFTER rerank so the
+	// semantic pass still chooses WHICH memories are relevant and the clock only
+	// decides the order — "the latest 5 posts about X", not "5 arbitrary recent rows".
+	switch strings.ToLower(q.OrderBy) {
+	case "recent":
+		sortByValidAt(pool, true)
+	case "oldest":
+		sortByValidAt(pool, false)
+	}
 	// Bump access stats for what we surfaced (best-effort) + emit the event.
 	for _, r := range pool {
 		_, _ = db.ExecContext(ctx,
@@ -544,6 +566,19 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	s.putCachedRecall(ckey, pool)
 	s.event(ctx, db, "recall", q.Namespace, "", outcome, nil, int(time.Since(start).Milliseconds()))
 	return pool, nil
+}
+
+// sortByValidAt orders results by event time (newest first when desc).
+func sortByValidAt(rs []Recalled, desc bool) {
+	for i := 1; i < len(rs); i++ {
+		for j := i; j > 0; j-- {
+			newer := rs[j].ValidAt.After(rs[j-1].ValidAt)
+			if (desc && !newer) || (!desc && newer) {
+				break
+			}
+			rs[j], rs[j-1] = rs[j-1], rs[j]
+		}
+	}
 }
 
 // maxExpand budgets 1-hop neighbors relative to the primary result count.
@@ -663,8 +698,9 @@ func errStr(err error) string {
 //
 // Filters are injected into every CTE that scans memories, so pre-rerank
 // candidates are already narrowed. Zero-cost when both filters are empty.
-func buildFilteredRecallSQL(base string, baseArgCount int, types, exclude []string) (string, []any) {
-	if len(types) == 0 && len(exclude) == 0 {
+func buildFilteredRecallSQL(base string, baseArgCount int, types, exclude []string, q *RecallQuery) (string, []any) {
+	temporal := q != nil && (q.Since != nil || q.Until != nil || q.AsOf != nil)
+	if len(types) == 0 && len(exclude) == 0 && !temporal {
 		return base, nil
 	}
 	var extraArgs []any
@@ -688,6 +724,32 @@ func buildFilteredRecallSQL(base string, baseArgCount int, types, exclude []stri
 		}
 		injection += " AND COALESCE(source_kind,'') NOT IN (" + strings.Join(phs, ",") + ")"
 	}
+	if temporal {
+		if q.Since != nil {
+			injection += fmt.Sprintf(" AND valid_at >= $%d", next)
+			extraArgs = append(extraArgs, *q.Since)
+			next++
+		}
+		if q.Until != nil {
+			injection += fmt.Sprintf(" AND valid_at <= $%d", next)
+			extraArgs = append(extraArgs, *q.Until)
+			next++
+		}
+		if q.AsOf != nil {
+			// Point-in-time: what the brain held true at that instant. Deliberately
+			// admits rows since superseded — the base SQL's `invalid_at IS NULL`
+			// only ever shows CURRENT truth, which cannot answer "as of March".
+			injection += fmt.Sprintf(" AND valid_at <= $%d AND (invalid_at IS NULL OR invalid_at > $%d)", next, next)
+			extraArgs = append(extraArgs, *q.AsOf)
+			next++
+		}
+	}
 	anchor := "tier = 'hot'"
-	return strings.ReplaceAll(base, anchor, anchor+injection), extraArgs
+	out := strings.ReplaceAll(base, anchor, anchor+injection)
+	if q != nil && q.AsOf != nil {
+		// Relax the hard-coded current-truth predicate so the AsOf window governs.
+		out = strings.ReplaceAll(out, "invalid_at IS NULL AND tier = 'hot'", "tier = 'hot'")
+		out = strings.ReplaceAll(out, "invalid_at IS NULL AND tier='hot'", "tier='hot'")
+	}
+	return out, extraArgs
 }

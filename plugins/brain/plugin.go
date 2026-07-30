@@ -115,6 +115,13 @@ func init() {
 		k.Router.Get("/api/brain/memory", secured(svc.Get))
 		k.Router.Post("/api/brain/forget", secured(svc.Forget))
 		k.Router.Post("/api/brain/dedup", secured(svc.Dedup))
+		// Graph plane — multi-hop traversal, typed neighbours, shortest path,
+		// community detection and ontology discovery, all in Postgres.
+		k.Router.Post("/api/brain/graph/traverse", secured(svc.TraverseHandler))
+		k.Router.Post("/api/brain/graph/neighbors", secured(svc.NeighborsHandler))
+		k.Router.Post("/api/brain/graph/path", secured(svc.PathHandler))
+		k.Router.Post("/api/brain/graph/communities", secured(svc.CommunitiesHandler))
+		k.Router.Get("/api/brain/graph/ontology", secured(svc.OntologyHandler))
 		k.Router.Post("/api/brain/share", secured(svc.Share))
 		k.Router.Get("/api/brain/gaps", secured(svc.Gaps))
 		k.Router.Post("/api/brain/gaps/resolve", secured(svc.ResolveGap))

@@ -173,6 +173,100 @@ CREATE TABLE IF NOT EXISTS memory_entities (
 );
 CREATE INDEX IF NOT EXISTS memory_entities_entity ON memory_entities (entity_id);
 
+-- ── Graph layer (SPEC §4.2 extended) ────────────────────────────────────────────────
+-- Everything below turns the graph from "a bag of untyped nodes" into something you
+-- can actually reason over in plain Postgres: typed nodes, typed + temporally-valid
+-- edges, first-class episodes for provenance, a declared ontology, and communities.
+-- No graph database required — recursive CTEs handle multi-hop traversal, and at this
+-- scale (thousands of nodes) they outperform the operational cost of a second store.
+
+-- Node type. Without it every entity is just a name, so a venture is indistinguishable
+-- from a person and "show me the ventures" is unanswerable — which made the graph
+-- effectively unusable for reasoning.
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS entity_type text NOT NULL DEFAULT 'entity';
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS metadata    jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS created_at  timestamptz NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS entities_ns_type ON entities (namespace, entity_type);
+
+-- Bi-temporal on memories: valid_at is the EVENT time (when it happened, back-dated on
+-- import); ingested_at is when WE learned it. Graphiti tracks both; we had only one
+-- axis, so back-dating an import silently destroyed any record of when it arrived.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS ingested_at timestamptz NOT NULL DEFAULT now();
+
+-- Typed, directed, temporally-valid edges between entities — the Graphiti triplet
+-- (subject → RELATION → object). memory_entities stays as the memory↔entity mention
+-- index; THIS table is the semantic graph. `fact` is the human-readable sentence and is
+-- embedded so edges are semantically searchable in their own right, not just traversable.
+CREATE TABLE IF NOT EXISTS entity_edges (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  namespace   text NOT NULL,
+  src_id      uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  dst_id      uuid NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  relation    text NOT NULL,                                -- OWNS | MEMBER_OF | ASSIGNED_TO | ...
+  fact        text,                                         -- "Ahmed Refaat is Engineering Manager on CADO"
+  embedding   vector(1024),
+  episode_id  uuid,                                         -- soft ref -> episodes.id (provenance)
+  memory_id   uuid,                                         -- soft ref -> memories.id  [D2]
+  weight      real NOT NULL DEFAULT 1.0,
+  valid_from  timestamptz NOT NULL DEFAULT now(),           -- when the relationship became true
+  valid_to    timestamptz,                                  -- NULL = still true; set, never deleted
+  ingested_at timestamptz NOT NULL DEFAULT now(),
+  metadata    jsonb NOT NULL DEFAULT '{}',
+  UNIQUE (namespace, src_id, dst_id, relation, valid_from)
+);
+CREATE INDEX IF NOT EXISTS entity_edges_src  ON entity_edges (src_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS entity_edges_dst  ON entity_edges (dst_id) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS entity_edges_rel  ON entity_edges (namespace, relation) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS entity_edges_time ON entity_edges (namespace, valid_from, valid_to);
+
+-- Episodes: the raw ingested unit. Every derived memory/edge traces back to one, so a
+-- fact can always be explained by the thing it came from.
+CREATE TABLE IF NOT EXISTS episodes (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  namespace   text NOT NULL,
+  name        text,
+  body        text NOT NULL,
+  source_kind text,
+  source_ref  text,
+  occurred_at timestamptz NOT NULL DEFAULT now(),           -- event time
+  ingested_at timestamptz NOT NULL DEFAULT now(),           -- learn time
+  metadata    jsonb NOT NULL DEFAULT '{}',
+  UNIQUE (namespace, source_ref)
+);
+CREATE INDEX IF NOT EXISTS episodes_ns_time ON episodes (namespace, occurred_at DESC);
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS episode_id uuid;   -- soft ref [D2]
+
+-- Declared ontology. Graphiti does this with Pydantic models; we keep it as data so a
+-- brain can describe its own shape and callers can validate against it.
+CREATE TABLE IF NOT EXISTS entity_types (
+  namespace   text NOT NULL,
+  name        text NOT NULL,
+  description text,
+  schema      jsonb NOT NULL DEFAULT '{}',
+  PRIMARY KEY (namespace, name)
+);
+CREATE TABLE IF NOT EXISTS edge_types (
+  namespace   text NOT NULL,
+  name        text NOT NULL,
+  description text,
+  src_type    text,                                         -- NULL = any
+  dst_type    text,
+  PRIMARY KEY (namespace, name)
+);
+
+-- Communities (clusters of densely-connected entities), assigned by label propagation.
+CREATE TABLE IF NOT EXISTS communities (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  namespace  text NOT NULL,
+  name       text NOT NULL,
+  summary    text,
+  size       int NOT NULL DEFAULT 0,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (namespace, name)
+);
+ALTER TABLE entities ADD COLUMN IF NOT EXISTS community_id uuid;
+CREATE INDEX IF NOT EXISTS entities_community ON entities (community_id);
+
 -- Append-only telemetry (OLAP; consolidation candidates, usage, cost).
 CREATE TABLE IF NOT EXISTS memory_events (
   id         bigserial PRIMARY KEY,
