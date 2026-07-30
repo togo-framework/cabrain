@@ -301,10 +301,16 @@ func (n *neighbor) simImportance(hint float64) float64 {
 // --- recall (SPEC §4.2) -------------------------------------------------------
 
 type RecallQuery struct {
-	Namespace     string  `json:"namespace"`
-	Query         string  `json:"query"`
-	Limit         int     `json:"limit"`        // final N after rerank (default 8)
-	ExpandEntity  bool    `json:"expandEntity"` // 1-hop spreading activation
+	Namespace string `json:"namespace"`
+	Query     string `json:"query"`
+	Limit     int    `json:"limit"` // final N after rerank (default 8)
+	// ExpandEntity turns on 1-hop spreading activation over the entity graph.
+	// DEFAULT ON: a JSON body that omits the key gets true (see UnmarshalJSON).
+	// It used to default to false for REST callers while only the internal chat/
+	// agent paths opted in, so POST /api/brain/recall — the endpoint the MCP tools
+	// and cabrain-agents actually use — never touched the graph at all. Send
+	// "expandEntity": false to opt out.
+	ExpandEntity  bool    `json:"expandEntity"`
 	MinImportance float64 `json:"minImportance"`
 	// Types narrows candidates to these memory_type values (empty = no filter).
 	// Use to scope recall semantically, e.g. Types=["venture","spec","goal"] when
@@ -314,6 +320,22 @@ type RecallQuery struct {
 	// to muffle noisy ingest streams (e.g. flowos_github_activity) that would
 	// otherwise dominate the pool.
 	ExcludeSourceKinds []string `json:"excludeSourceKinds,omitempty"`
+}
+
+// UnmarshalJSON decodes a RecallQuery with ExpandEntity defaulting to TRUE when
+// the caller omits it. Plain struct decoding gives the zero value (false), which
+// silently disabled entity expansion for every REST/MCP caller.
+func (q *RecallQuery) UnmarshalJSON(b []byte) error {
+	type alias RecallQuery // avoid recursing into this method
+	tmp := struct {
+		ExpandEntity *bool `json:"expandEntity"`
+		*alias
+	}{alias: (*alias)(q)}
+	if err := json.Unmarshal(b, &tmp); err != nil {
+		return err
+	}
+	q.ExpandEntity = tmp.ExpandEntity == nil || *tmp.ExpandEntity
+	return nil
 }
 
 type Recalled struct {
