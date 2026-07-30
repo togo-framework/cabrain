@@ -539,7 +539,13 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	// populated the entity graph (brain-cognee). Default-on per the tool contract.
 	if q.ExpandEntity && len(pool) > 0 {
 		if extra := s.expandEntities(ctx, db, q.Namespace, pool, maxExpand(q.Limit)); len(extra) > 0 {
-			pool = append(pool, extra...)
+			// The expansion query does not carry the caller's filters, so it would
+			// happily append memories from OUTSIDE the requested window — asking for
+			// "last week" and receiving April rows, which defeats the whole point of
+			// the temporal params. Post-filter here rather than splicing predicates
+			// into that query: its predicates are m.-qualified with different arg
+			// numbering, so the buildFilteredRecallSQL anchor would mis-splice.
+			pool = append(pool, filterTemporal(extra, q)...)
 		}
 	}
 	// Time ordering, when the caller asked for it. Applied AFTER rerank so the
@@ -566,6 +572,30 @@ func (s *Store) Recall(ctx context.Context, q RecallQuery) ([]Recalled, error) {
 	s.putCachedRecall(ckey, pool)
 	s.event(ctx, db, "recall", q.Namespace, "", outcome, nil, int(time.Since(start).Milliseconds()))
 	return pool, nil
+}
+
+// filterTemporal drops rows outside the query's event-time window. Used for the
+// 1-hop expansion results, which come from a query that knows nothing about the
+// caller's Since/Until/AsOf and would otherwise smuggle out-of-window memories
+// into an answer the caller explicitly time-boxed.
+func filterTemporal(rs []Recalled, q RecallQuery) []Recalled {
+	if q.Since == nil && q.Until == nil && q.AsOf == nil {
+		return rs
+	}
+	out := rs[:0:0]
+	for _, r := range rs {
+		if q.Since != nil && r.ValidAt.Before(*q.Since) {
+			continue
+		}
+		if q.Until != nil && r.ValidAt.After(*q.Until) {
+			continue
+		}
+		if q.AsOf != nil && r.ValidAt.After(*q.AsOf) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // sortByValidAt orders results by event time (newest first when desc).
