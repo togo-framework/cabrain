@@ -182,8 +182,32 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	}
 
 	// §4.1 decision: compare against the nearest existing memory in scope.
-	top := s.topNeighbor(ctx, db, in.Namespace, vec)
-	decision, relatedID := writeDecision(top, in.Content)
+	//
+	// EXCEPT when the caller supplied a source_ref. A source_ref is an IDENTITY
+	// ("db:release:42"), not a similarity hint: that row is the same record, and a
+	// different row is a different record no matter how alike the text is. Running
+	// the similarity heuristic on imports is lossy — backfilling FlowOS collapsed
+	// 108 releases into 2 and 226 roadmaps into 43, because rows that differ only
+	// by version/date embed above the 0.97 NOOP threshold. So when the ref already
+	// exists we supersede exactly that row, and when it doesn't we always ADD.
+	var decision, relatedID string
+	var top *neighbor
+	if strings.TrimSpace(in.SourceRef) != "" {
+		var existing string
+		err := db.QueryRowContext(ctx,
+			`SELECT id::text FROM memories
+			 WHERE namespace = $1 AND source_ref = $2 AND invalid_at IS NULL
+			 ORDER BY valid_at DESC LIMIT 1`, in.Namespace, in.SourceRef).Scan(&existing)
+		switch {
+		case err == nil && existing != "":
+			decision, relatedID = "update", existing
+		default:
+			decision = "add"
+		}
+	} else {
+		top = s.topNeighbor(ctx, db, in.Namespace, vec)
+		decision, relatedID = writeDecision(top, in.Content)
+	}
 
 	// NOOP: the memory already exists — strengthen it (reconsolidation) instead of
 	// storing a duplicate. No new row.
