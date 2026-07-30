@@ -122,6 +122,19 @@ CREATE INDEX IF NOT EXISTS memories_vec_live
 -- the partial index above exists, so there is never a window without a vector index.
 DROP INDEX IF EXISTS memories_vec;
 
+-- Domain-type filter index. RecallQuery.Types filters on metadata->>'type' (the
+-- DOMAIN type: post/venture/issue/...), which had no index at all — while the two
+-- dedicated typed columns, memory_type and network, carried a single hardcoded
+-- value each and indexed nothing useful. Agents use this filter to cut noisy
+-- ingest streams out of the candidate pool, so it belongs on the hot path.
+-- The expression must match buildFilteredRecallSQL's predicate EXACTLY. Indexing a
+-- bare metadata->>'type' leaves the planner using only the namespace column and
+-- re-checking the type as a Filter; with the COALESCE/NULLIF wrapper included it
+-- becomes a real Index Cond (measured: cost 5999 -> ~200 on the flowos brain).
+CREATE INDEX IF NOT EXISTS memories_ns_domain_type
+  ON memories (namespace, (COALESCE(NULLIF(metadata->>'type',''),'item')))
+  WHERE invalid_at IS NULL AND tier = 'hot';
+
 -- [V1] BM25 long-text, Arabic-capable — CONFIRMED API for vchord_bm25 0.3.0 +
 -- pg_tokenizer 0.1.1 on the live cabrain DB. Applied by bm25.sql (separate, so a
 -- tokenizer-config issue never blocks the core schema), and populated on the retain

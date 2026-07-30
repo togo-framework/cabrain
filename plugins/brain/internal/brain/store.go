@@ -12,6 +12,63 @@ import (
 	"time"
 )
 
+// classifyMemory picks the (network, memory_type) pair for a write.
+//
+// The schema DESIGNS a taxonomy — memory_type ∈ episodic|semantic|procedural|
+// working and network ∈ fact|experience|observation|belief, both CHECK-constrained
+// — but the insert used to hardcode 'experience','episodic' for every row. So both
+// columns carried exactly one value each (verified: 5,329/5,329 flowos rows
+// 'episodic'/'experience') while the real distinction lived in metadata->>'type'.
+// Two dedicated typed columns that say nothing, and the meaningful axis buried in
+// JSON.
+//
+// They are genuinely different axes and both are worth having:
+//
+//	memory_type = the COGNITIVE class, which consolidation/demotion policy keys on
+//	              (a venture description is a durable fact; a post is an event).
+//	metadata.type = the DOMAIN type (post, issue, venture…), used for filtering.
+//
+// A caller may state either explicitly; otherwise derive from the domain type.
+func classifyMemory(in MemoryInput) (network, memType string) {
+	network, memType = in.Network, in.MemoryType
+	domain, _ := in.Metadata["type"].(string)
+	if memType == "" {
+		switch strings.ToLower(strings.TrimSpace(domain)) {
+		// Durable descriptions of things that ARE, not things that happened.
+		case "venture", "person", "portfolio", "agent", "position", "canvas",
+			"org-rollup", "alias", "spec", "learning", "dependency", "channel",
+			"responsibility", "infra", "code":
+			memType = "semantic"
+		// How-to / process material.
+		case "workflow", "playbook", "roadmap", "transition", "plan":
+			memType = "procedural"
+		default: // dated occurrences: post, issue, goal, release, calendar-event…
+			memType = "episodic"
+		}
+	}
+	if network == "" {
+		switch memType {
+		case "semantic":
+			network = "fact"
+		case "procedural":
+			network = "fact"
+		default:
+			network = "experience"
+		}
+	}
+	// Never write a value the CHECK constraint would reject.
+	if !validMemType[memType] {
+		memType = "episodic"
+	}
+	if !validNetwork[network] {
+		network = "experience"
+	}
+	return network, memType
+}
+
+var validMemType = map[string]bool{"episodic": true, "semantic": true, "procedural": true, "working": true}
+var validNetwork = map[string]bool{"fact": true, "experience": true, "observation": true, "belief": true}
+
 // metaJSON marshals a metadata map to a JSON string for the jsonb column (nil → NULL).
 func metaJSON(m map[string]any) any {
 	if len(m) == 0 {
@@ -98,6 +155,11 @@ type MemoryInput struct {
 	// store has no way to order them. Set it whenever you are importing something
 	// that already has a creation date at the source.
 	ValidAt *time.Time
+
+	// Network / MemoryType let a caller state the cognitive classification
+	// explicitly. Empty → derived from Metadata["type"] by classifyMemory.
+	Network    string // fact | experience | observation | belief
+	MemoryType string // episodic | semantic | procedural | working
 }
 
 // UnmarshalJSON accepts BOTH camelCase and snake_case keys. The struct has no
@@ -128,6 +190,8 @@ func (m *MemoryInput) UnmarshalJSON(b []byte) error {
 	get("owneragentid", &m.OwnerAgentID)
 	get("metadata", &m.Metadata)
 	get("validat", &m.ValidAt)
+	get("network", &m.Network)
+	get("memorytype", &m.MemoryType)
 	return nil
 }
 
@@ -231,16 +295,18 @@ func (s *Store) Retain(ctx context.Context, in MemoryInput) (*RetainResult, erro
 	if in.ValidAt != nil && !in.ValidAt.IsZero() {
 		validAt = *in.ValidAt
 	}
+	network, memType := classifyMemory(in)
 	var id string
 	err = db.QueryRowContext(ctx, `
 		INSERT INTO memories
 		  (namespace, owner_agent_id, visibility, network, memory_type, content,
 		   source_kind, source_ref, embedding, importance, tier, metadata, valid_at)
-		VALUES ($1,$2,$3,'experience','episodic',$4,$5,$6,$7::vector,$8,'hot',
+		VALUES ($1,$2,$3,$11,$12,$4,$5,$6,$7::vector,$8,'hot',
 		        COALESCE($9::jsonb,'{}'::jsonb), COALESCE($10::timestamptz, now()))
 		RETURNING id`,
 		in.Namespace, nullStr(in.OwnerAgentID), vis, in.Content,
 		nullStr(in.SourceKind), nullStr(in.SourceRef), vec, imp, metaJSON(in.Metadata), validAt,
+		network, memType,
 	).Scan(&id)
 	if err != nil {
 		return nil, errors.New("brain.Retain: insert: " + err.Error())
@@ -312,7 +378,9 @@ type RecallQuery struct {
 	// "expandEntity": false to opt out.
 	ExpandEntity  bool    `json:"expandEntity"`
 	MinImportance float64 `json:"minImportance"`
-	// Types narrows candidates to these memory_type values (empty = no filter).
+	// Types narrows candidates to these metadata->>'type' DOMAIN types — "post",
+	// "venture", "issue" … NOT the memory_type column (which is the cognitive
+	// class: episodic/semantic/procedural). Empty = no filter.
 	// Use to scope recall semantically, e.g. Types=["venture","spec","goal"] when
 	// the caller wants project descriptions rather than commit-count episodics.
 	Types []string `json:"types,omitempty"`
