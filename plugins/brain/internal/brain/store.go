@@ -28,23 +28,25 @@ import (
 //	              (a venture description is a durable fact; a post is an event).
 //	metadata.type = the DOMAIN type (post, issue, venture…), used for filtering.
 //
-// A caller may state either explicitly; otherwise derive from the domain type.
+// A caller may state either explicitly; otherwise derive from the domain type,
+// falling back to source_kind when a brain stores no type at all.
+//
+// The vocabulary below is deliberately broad because "episodic" is the DEFAULT,
+// and defaulting wrongly is the expensive direction: a first pass that only knew
+// the FlowOS types left 2,749 `doc` rows, 838 `knowledge`, and the whole avo
+// board/kickstart/radar corpus filed as dated events when they are reference
+// material that never "happened" at all.
 func classifyMemory(in MemoryInput) (network, memType string) {
 	network, memType = in.Network, in.MemoryType
 	domain, _ := in.Metadata["type"].(string)
 	if memType == "" {
-		switch strings.ToLower(strings.TrimSpace(domain)) {
-		// Durable descriptions of things that ARE, not things that happened.
-		case "venture", "person", "portfolio", "agent", "position", "canvas",
-			"org-rollup", "alias", "spec", "learning", "dependency", "channel",
-			"responsibility", "infra", "code":
-			memType = "semantic"
-		// How-to / process material.
-		case "workflow", "playbook", "roadmap", "transition", "plan":
-			memType = "procedural"
-		default: // dated occurrences: post, issue, goal, release, calendar-event…
-			memType = "episodic"
-		}
+		memType = classifyKind(domain)
+	}
+	if memType == "" { // brains that store no metadata.type — infer from provenance
+		memType = classifyKind(in.SourceKind)
+	}
+	if memType == "" {
+		memType = "episodic" // a dated occurrence: post, issue, release, commit…
 	}
 	if network == "" {
 		switch memType {
@@ -64,6 +66,44 @@ func classifyMemory(in MemoryInput) (network, memType string) {
 		network = "experience"
 	}
 	return network, memType
+}
+
+// classifyKind maps a domain type OR a source_kind to a cognitive class, or ""
+// when it recognises neither. Matching is on the leading token so families like
+// "datasource:markdown" and "flowos_learning" resolve without listing every
+// variant.
+func classifyKind(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	for _, sep := range []string{":", "/"} { // datasource:markdown → datasource
+		if i := strings.Index(s, sep); i > 0 {
+			s = s[:i]
+		}
+	}
+	s = strings.TrimPrefix(s, "flowos_")
+	switch s {
+	// SEMANTIC — durable descriptions and reference material. Things that ARE.
+	case "venture", "person", "portfolio", "agent", "position", "canvas",
+		"org-rollup", "alias", "spec", "learning", "dependency", "channel",
+		"responsibility", "infra", "code", "codebase",
+		"doc", "docs", "knowledge", "reference", "taxonomy", "note", "guide",
+		"faq", "research", "thesis", "board", "kickstart", "radar", "design",
+		"rules", "decision", "definition", "glossary", "profile", "system-note":
+		return "semantic"
+	// PROCEDURAL — how to do something.
+	case "workflow", "playbook", "roadmap", "transition", "plan", "runbook",
+		"checklist", "sop", "howto", "drill", "exercise", "procedure", "recipe":
+		return "procedural"
+	// EPISODIC — dated occurrences. Listed explicitly so the default stays honest.
+	case "post", "issue", "goal", "release", "calendar-event", "transcript",
+		"incident", "task", "approval", "pipeline", "okr", "metric", "budget",
+		"activity-score", "session-topic", "harvested", "marketing",
+		"git-activity", "claude-activity", "chat-session", "deployment", "item":
+		return "episodic"
+	}
+	return ""
 }
 
 var validMemType = map[string]bool{"episodic": true, "semantic": true, "procedural": true, "working": true}
