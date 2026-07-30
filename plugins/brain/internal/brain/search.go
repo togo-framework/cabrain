@@ -2,7 +2,9 @@ package brain
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,9 +80,19 @@ func (s *Store) SearchAll(ctx context.Context, q SearchQuery) ([]Recalled, error
 	nsList := strings.Join(cleanNamespaces(q.Namespaces), ",")
 	const pool = 60
 
-	rows, err := db.QueryContext(ctx, searchSQL, vec, nsList, q.Query, pool, bm25Tokenizer())
+	// Same ANN post-filter guard as recall (see hnswEFSearch): the index holds
+	// superseded rows too, so a small candidate list is gutted by the
+	// invalid_at/tier filter. SET LOCAL keeps it scoped to this transaction.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		rows, err = db.QueryContext(ctx, searchVecSQL, vec, nsList, q.Limit)
+		return nil, errors.New("brain.Search: begin: " + err.Error())
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only tx: rollback is the normal exit
+	_, _ = tx.ExecContext(ctx, "SET LOCAL hnsw.ef_search = "+strconv.Itoa(hnswEFSearch()))
+
+	rows, err := tx.QueryContext(ctx, searchSQL, vec, nsList, q.Query, pool, bm25Tokenizer())
+	if err != nil {
+		rows, err = tx.QueryContext(ctx, searchVecSQL, vec, nsList, q.Limit)
 		if err != nil {
 			return nil, errors.New("brain.Search: query: " + err.Error())
 		}

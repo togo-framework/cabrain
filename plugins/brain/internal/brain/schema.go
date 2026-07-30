@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 )
 
 // bm25Tokenizer is the pg_tokenizer tokenizer recall/retain use. It is created by
@@ -17,6 +18,32 @@ func bm25Tokenizer() string {
 		return t
 	}
 	return "cabrain_bm25_tok"
+}
+
+// hnswEFSearch is the HNSW candidate-list size (hnsw.ef_search) applied to every
+// ANN query in recall/search.
+//
+// Why this is NOT optional: the ANN index contains EVERY row, including
+// superseded ones, but the queries post-filter with `invalid_at IS NULL AND
+// tier='hot'`. On the live brain ~85% of rows are superseded (the write-decision
+// invalidates on UPDATE), so an ef_search of 40 returns ~40 raw candidates of
+// which only a handful survive the filter — measured 12/40 on flowos, and for
+// some query vectors ZERO, which is why questions whose answer demonstrably
+// exists ("BIV", short/Arabic turns) recalled nothing at all while longer
+// queries worked. Raising the candidate list restores full results:
+//
+//	ef_search=40 → 12/40 rows (8ms) · 100 → 32/40 · 200 → 40/40 (12ms)
+//
+// 200 is the default: full recall at negligible cost. Tune with
+// BRAIN_HNSW_EF_SEARCH. The structural fix is a partial index on the live rows
+// (see docs) — this makes recall correct regardless.
+func hnswEFSearch() int {
+	if v := os.Getenv("BRAIN_HNSW_EF_SEARCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+			return n
+		}
+	}
+	return 200
 }
 
 // ErrBM25Skipped wraps a non-fatal BM25-layer failure during Migrate: the core

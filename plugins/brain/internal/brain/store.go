@@ -1,8 +1,6 @@
 package brain
 
 import (
-
-
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 // metaJSON marshals a metadata map to a JSON string for the jsonb column (nil → NULL).
@@ -235,11 +232,11 @@ func (n *neighbor) simImportance(hint float64) float64 {
 // --- recall (SPEC §4.2) -------------------------------------------------------
 
 type RecallQuery struct {
-	Namespace     string   `json:"namespace"`
-	Query         string   `json:"query"`
-	Limit         int      `json:"limit"`        // final N after rerank (default 8)
-	ExpandEntity  bool     `json:"expandEntity"` // 1-hop spreading activation
-	MinImportance float64  `json:"minImportance"`
+	Namespace     string  `json:"namespace"`
+	Query         string  `json:"query"`
+	Limit         int     `json:"limit"`        // final N after rerank (default 8)
+	ExpandEntity  bool    `json:"expandEntity"` // 1-hop spreading activation
+	MinImportance float64 `json:"minImportance"`
 	// Types narrows candidates to these memory_type values (empty = no filter).
 	// Use to scope recall semantically, e.g. Types=["venture","spec","goal"] when
 	// the caller wants project descriptions rather than commit-count episodics.
@@ -410,8 +407,20 @@ func (s *Store) expandEntities(ctx context.Context, db *sql.DB, ns string, seed 
 
 // recallPool runs a candidate query (recallSQL or recallVecSQL) and scans the
 // standard Recalled column set. Both queries share the same projection.
+// It runs inside a read-only transaction so `SET LOCAL hnsw.ef_search` applies
+// to this query alone (see hnswEFSearch: without it the ANN candidate list is
+// gutted by the invalid_at/tier post-filter and recall silently returns few or
+// zero rows) and is reverted on commit — no pooled connection is left mutated.
 func (s *Store) recallPool(ctx context.Context, db *sql.DB, query string, args ...any) ([]Recalled, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only tx: rollback is the normal exit
+	// Best-effort: a Postgres without pgvector's GUC just errors here and the
+	// query still runs (this only affects candidate depth, never correctness).
+	_, _ = tx.ExecContext(ctx, "SET LOCAL hnsw.ef_search = "+strconv.Itoa(hnswEFSearch()))
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
