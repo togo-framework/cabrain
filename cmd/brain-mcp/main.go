@@ -176,7 +176,7 @@ func (s *server) callTool(req *rpcReq) {
 			"expandEntity":       args["expand_entities"],
 			"types":              args["types"],
 			"excludeSourceKinds": args["exclude_source_kinds"],
-			"minImportance": args["min_importance"],
+			"minImportance":      args["min_importance"],
 		})
 	case "memory_recall_archive":
 		// Phase 2: cold-tier deep recall is stubbed until cold demotion exists.
@@ -202,6 +202,20 @@ func (s *server) callTool(req *rpcReq) {
 			"canRead":        args["can_read"],
 			"canWrite":       args["can_write"],
 		})
+	case "graph_traverse":
+		body, code, err = s.post("/api/brain/graph/traverse", map[string]any{
+			"namespace": args["namespace"], "entity": args["entity"], "depth": args["depth"],
+			"relations": args["relations"], "types": args["types"],
+			"direction": args["direction"], "asOf": args["asOf"], "limit": args["limit"]})
+	case "graph_neighbors":
+		body, code, err = s.post("/api/brain/graph/neighbors", map[string]any{
+			"namespace": args["namespace"], "entity": args["entity"], "asOf": args["asOf"]})
+	case "graph_path":
+		body, code, err = s.post("/api/brain/graph/path", map[string]any{
+			"namespace": args["namespace"], "from": args["from"], "to": args["to"],
+			"maxDepth": args["maxDepth"]})
+	case "graph_ontology":
+		body, code, err = s.get("/api/brain/graph/ontology", url.Values{"namespace": {str(args["namespace"])}})
 	case "memory_gaps":
 		qv := url.Values{}
 		if v := str(args["namespace"]); v != "" {

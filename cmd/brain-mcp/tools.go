@@ -35,12 +35,12 @@ var toolDefs = []map[string]any{
 		"description": "Hybrid retrieval (runs §4.2): scoped vector + BM25 fused with RRF + salience, " +
 			"reranked (bge-reranker-v2-m3), optional 1-hop entity expansion. Hot tier only; p95 < 300ms.",
 		"inputSchema": obj(prop{
-			"namespace":       prop{"type": "string", "description": "memory scope (read-checked against grants)"},
-			"query":           prop{"type": "string", "description": "natural-language query (vector + BM25)"},
-			"limit":           prop{"type": "integer", "description": "final N after rerank (default 8, max 50)"},
-			"expand_entities": prop{"type": "boolean", "description": "1-hop spreading activation (default true)"},
-			"min_importance":  prop{"type": "number", "description": "optional floor filter"},
-			"types":           prop{"type": "array", "items": prop{"type": "string"}, "description": "narrow to these memory_type values (e.g. [\"venture\",\"spec\",\"goal\"]) — cuts noise from bulk ingest types like git-activity"},
+			"namespace":            prop{"type": "string", "description": "memory scope (read-checked against grants)"},
+			"query":                prop{"type": "string", "description": "natural-language query (vector + BM25)"},
+			"limit":                prop{"type": "integer", "description": "final N after rerank (default 8, max 50)"},
+			"expand_entities":      prop{"type": "boolean", "description": "1-hop spreading activation (default true)"},
+			"min_importance":       prop{"type": "number", "description": "optional floor filter"},
+			"types":                prop{"type": "array", "items": prop{"type": "string"}, "description": "narrow to these memory_type values (e.g. [\"venture\",\"spec\",\"goal\"]) — cuts noise from bulk ingest types like git-activity"},
 			"exclude_source_kinds": prop{"type": "array", "items": prop{"type": "string"}, "description": "drop candidates from these source_kind streams (e.g. [\"flowos_github_activity\"]) to muffle high-volume noise"},
 		}, "namespace", "query"),
 	},
@@ -89,6 +89,48 @@ var toolDefs = []map[string]any{
 			"can_read":         prop{"type": "boolean", "default": true},
 			"can_write":        prop{"type": "boolean", "default": false},
 		}, "namespace", "grantee_agent_id"),
+	},
+	{
+		"name": "graph_traverse",
+		"description": "Walk the entity graph outward from a named entity (multi-hop). Answers relational " +
+			"questions similarity search cannot, e.g. 'which people work on ventures in the Turif portfolio'. " +
+			"Returns each reachable entity with its type, depth and the path walked to reach it.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"entity":    prop{"type": "string", "description": "exact entity name to start from"},
+			"depth":     prop{"type": "integer", "description": "hops, default 2, max 6"},
+			"relations": prop{"type": "array", "items": prop{"type": "string"}, "description": "restrict to these relation types (see graph_ontology)"},
+			"types":     prop{"type": "array", "items": prop{"type": "string"}, "description": "only return these entity types"},
+			"direction": prop{"type": "string", "enum": []string{"out", "in", "both"}},
+			"asOf":      prop{"type": "string", "description": "RFC3339 — walk the graph as it stood then"},
+			"limit":     prop{"type": "integer"},
+		}, "namespace", "entity"),
+	},
+	{
+		"name": "graph_neighbors",
+		"description": "Immediate typed relationships of one entity, each with its relation, direction and a " +
+			"human-readable fact. Use to explain HOW something is connected.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"entity":    prop{"type": "string"},
+			"asOf":      prop{"type": "string", "description": "RFC3339 — relationships valid at that instant"},
+		}, "namespace", "entity"),
+	},
+	{
+		"name":        "graph_path",
+		"description": "Shortest relationship path between two entities — answers 'how are these two connected?'.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"from":      prop{"type": "string"},
+			"to":        prop{"type": "string"},
+			"maxDepth":  prop{"type": "integer", "description": "default 4, max 6"},
+		}, "namespace", "from", "to"),
+	},
+	{
+		"name": "graph_ontology",
+		"description": "The brain's declared shape: entity types and relation types with live counts. Call this " +
+			"FIRST to discover which entity/relation names graph_traverse will accept.",
+		"inputSchema": obj(prop{"namespace": prop{"type": "string"}}, "namespace"),
 	},
 	{
 		"name": "memory_gaps",
