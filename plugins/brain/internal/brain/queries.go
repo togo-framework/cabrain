@@ -163,13 +163,36 @@ func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphD
 	// Nodes MUST carry entity_type as the group, otherwise every node renders as
 	// one undifferentiated blob and the explorer is unusable — a venture looks
 	// exactly like a person. (This query used to select only id+name.)
-	nq := `SELECT id::text, name, COALESCE(NULLIF(entity_type,''),'entity') FROM entities`
-	args := []any{}
-	if namespace != "" {
-		nq += ` WHERE namespace = $1`
-		args = append(args, namespace)
-	}
-	rows, err := db.QueryContext(ctx, nq+` ORDER BY entity_type, name LIMIT `+itoa(limit), args...)
+	// Sample the nodes FAIRLY across entity types. A plain "ORDER BY entity_type
+	// LIMIT n" silently truncates to whichever types sort first — with 12 types and
+	// 1,670 nodes the explorer showed only agent/campaign/channel/goal and looked
+	// like the other eight types did not exist. Give every type a quota, and inside
+	// each type prefer the most-connected nodes, since hubs are what make a graph
+	// view legible.
+	nq := `
+WITH ends AS (
+  SELECT namespace, src_id AS id FROM entity_edges WHERE valid_to IS NULL
+  UNION ALL
+  SELECT namespace, dst_id FROM entity_edges WHERE valid_to IS NULL
+), deg AS (
+  SELECT id, count(*) AS d FROM ends WHERE ($1 = '' OR namespace = $1) GROUP BY id
+), typed AS (
+  SELECT e.id, e.name, COALESCE(NULLIF(e.entity_type,''),'entity') AS grp, COALESCE(d.d,0) AS deg
+  FROM entities e LEFT JOIN deg d ON d.id = e.id
+  WHERE ($1 = '' OR e.namespace = $1)
+), quota AS (
+  SELECT GREATEST(3, ` + itoa(limit) + ` / GREATEST(1, (SELECT count(DISTINCT grp) FROM typed))) AS q
+), ranked AS (
+  SELECT id, name, grp, deg,
+         ROW_NUMBER() OVER (PARTITION BY grp ORDER BY deg DESC, name) AS rn
+  FROM typed
+)
+SELECT id::text, name, grp FROM ranked, quota
+WHERE rn <= quota.q
+ORDER BY deg DESC, grp, name
+LIMIT ` + itoa(limit)
+	args := []any{namespace}
+	rows, err := db.QueryContext(ctx, nq, args...)
 	if err != nil {
 		return g, nil
 	}
