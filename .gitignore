@@ -21,6 +21,15 @@
 __pycache__/
 *.pyc
 
+# Local analytics plane (DuckDB ETL output — derived from FlowOS prod, never committed)
+/data/
+*.duckdb
+*.duckdb.wal
+
+# The CLI is its OWN repo (github.com/togo-framework/cabrain-cli) that people clone
+# side-by-side here. Committing it into this tree would fork it into two histories.
+/cabrain-cli/
+
 # built binaries
 /brain-mcp
 /cabrain-api
