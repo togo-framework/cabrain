@@ -83,8 +83,25 @@ func (s *Store) bumpEpoch(ns string) {
 func recallCacheKey(q RecallQuery, epoch string) string {
 	norm := strings.ToLower(strings.TrimSpace(q.Query))
 	raw := fmt.Sprintf("%s|%s|%d|%g|%t|%s", q.Namespace, norm, q.Limit, q.MinImportance, q.ExpandEntity, epoch)
+	// The filter and temporal parameters change the result set and its ORDER, so
+	// they must be part of the key. Omitting them made recalls that differ only by
+	// orderBy/since/until/asOf/types collide: the first one to run populated the
+	// entry and every later variant was served its answer — which defeated
+	// orderBy:"recent" exactly when a plain recall had already been cached.
+	raw += "|ob=" + strings.ToLower(q.OrderBy)
+	raw += "|ty=" + strings.Join(q.Types, ",")
+	raw += "|ex=" + strings.Join(q.ExcludeSourceKinds, ",")
+	raw += "|si=" + tsKey(q.Since) + "|un=" + tsKey(q.Until) + "|as=" + tsKey(q.AsOf)
 	sum := sha1.Sum([]byte(raw))
 	return recallKeyPrefix + hex.EncodeToString(sum[:])
+}
+
+// tsKey renders an optional instant for the cache key ("-" when unset).
+func tsKey(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return strconv.FormatInt(t.UTC().UnixNano(), 10)
 }
 
 // getCachedRecall returns a cached result set for the key, if present and decodable.
