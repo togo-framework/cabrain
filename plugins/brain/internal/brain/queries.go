@@ -133,11 +133,29 @@ type GraphEdge struct {
 	Relation string `json:"relation,omitempty"` // typed relation from entity_edges
 	Fact     string `json:"fact,omitempty"`
 }
+
+// GraphTypeCount is the TRUE population of one entity type, independent of how
+// many nodes the sample happened to include.
+type GraphTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
 type GraphData struct {
 	Ready   bool        `json:"ready"`
 	Derived bool        `json:"derived"` // true = built from memory metadata (Cognee graph absent)
 	Nodes   []GraphNode `json:"nodes"`
 	Edges   []GraphEdge `json:"edges"`
+	// TypeCounts holds the real per-type totals. Nodes is a fair SAMPLE capped by a
+	// per-type quota (limit/#types), so counting Nodes by group reports the quota —
+	// the explorer legend read "17" for eleven different types because 250/14 = 17,
+	// not because the brain holds 17 of each. Relation counts have the same problem:
+	// Edges is truncated to limit*4. Anything user-facing must count from here.
+	TypeCounts     []GraphTypeCount `json:"typeCounts"`
+	RelationCounts []GraphTypeCount `json:"relationCounts"`
+	TotalNodes     int              `json:"totalNodes"`
+	TotalEdges     int              `json:"totalEdges"`
+	Sampled        bool             `json:"sampled"` // true when Nodes/Edges are a subset
 }
 
 func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphData, error) {
@@ -205,6 +223,37 @@ LIMIT ` + itoa(limit)
 			keep[n.ID] = true
 		}
 	}
+
+	// True populations, counted over the WHOLE graph rather than over the sample
+	// above, so the explorer can show "repo 459" while still drawing only the 17
+	// best-connected repos.
+	if crows, err := db.QueryContext(ctx, `
+SELECT COALESCE(NULLIF(entity_type,''),'entity') AS grp, count(*)
+FROM entities WHERE ($1 = '' OR namespace = $1)
+GROUP BY 1 ORDER BY 2 DESC, 1`, namespace); err == nil {
+		defer crows.Close()
+		for crows.Next() {
+			var tc GraphTypeCount
+			if err := crows.Scan(&tc.Type, &tc.Count); err == nil {
+				g.TypeCounts = append(g.TypeCounts, tc)
+				g.TotalNodes += tc.Count
+			}
+		}
+	}
+	if rrows, err := db.QueryContext(ctx, `
+SELECT relation, count(*) FROM entity_edges
+WHERE valid_to IS NULL AND ($1 = '' OR namespace = $1)
+GROUP BY 1 ORDER BY 2 DESC, 1`, namespace); err == nil {
+		defer rrows.Close()
+		for rrows.Next() {
+			var rc GraphTypeCount
+			if err := rrows.Scan(&rc.Type, &rc.Count); err == nil {
+				g.RelationCounts = append(g.RelationCounts, rc)
+				g.TotalEdges += rc.Count
+			}
+		}
+	}
+	g.Sampled = len(g.Nodes) < g.TotalNodes
 
 	// Prefer the TYPED graph. entity_edges holds real subject→RELATION→object
 	// triplets; memory_entities co-occurrence ("these two were mentioned in the

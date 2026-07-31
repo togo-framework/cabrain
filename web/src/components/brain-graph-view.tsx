@@ -26,19 +26,30 @@ export function BrainGraphView({ data, namespace }: { data: GraphData; namespace
   }, []);
 
   // Shared legend (group → color, with counts) — identical across both views.
+  // Counts come from data.typeCounts, which the API computes over the WHOLE graph.
+  // Tallying data.nodes instead reports the SAMPLE: the server gives each type a
+  // quota of limit/#types, so eleven different types all read "17" (250/14) and the
+  // legend looked broken. Fall back to tallying only for an API too old to send it.
   const legend = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const n of data.nodes ?? []) {
-      const g = n.group ?? "entity";
-      counts.set(g, (counts.get(g) ?? 0) + 1);
+    if (data.typeCounts?.length) {
+      for (const t of data.typeCounts) counts.set(t.type, t.count);
+    } else {
+      for (const n of data.nodes ?? []) {
+        const g = n.group ?? "entity";
+        counts.set(g, (counts.get(g) ?? 0) + 1);
+      }
     }
     return [...counts.entries()]
       .sort((a, b) => compareGroups(a[0], b[0]))
       .map(([group, count]) => ({ group, count, color: colorForGroup(group) }));
   }, [data]);
 
-  const nodeCount = data.nodes?.length ?? 0;
-  const edgeCount = data.edges?.length ?? 0;
+  const nodeCount = data.totalNodes ?? data.nodes?.length ?? 0;
+  const edgeCount = data.totalEdges ?? data.edges?.length ?? 0;
+  const shownNodes = data.nodes?.length ?? 0;
+  const shownEdges = data.edges?.length ?? 0;
+  const sampled = data.sampled ?? shownNodes < nodeCount;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -77,8 +88,12 @@ export function BrainGraphView({ data, namespace }: { data: GraphData; namespace
           </span>
         ))}
 
-        <span className="ml-auto whitespace-nowrap tabular-nums text-muted-foreground">
+        <span
+          className="ml-auto whitespace-nowrap tabular-nums text-muted-foreground"
+          title={sampled ? `Drawing ${shownNodes} of ${nodeCount} nodes and ${shownEdges} of ${edgeCount} edges` : undefined}
+        >
           {nodeCount} nodes · {edgeCount} edges
+          {sampled && <span className="opacity-60"> · showing {shownNodes}</span>}
         </span>
       </div>
 
@@ -102,7 +117,7 @@ const MIN_K = 0.15;
 const MAX_K = 2.4;
 
 type Placed = { node: GraphNode; x: number; y: number };
-type Column = { group: string; count: number; nodes: GraphNode[]; x: number };
+type Column = { group: string; count: number; shown: number; nodes: GraphNode[]; x: number };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -136,6 +151,9 @@ function SchemaGraphView({ data, namespace }: { data: GraphData; namespace: stri
       byGroup.set(g, arr);
     }
     const groups = [...byGroup.keys()].sort(compareGroups);
+    // Column headers must show the TRUE population, not how many cards this
+    // sampled column happens to hold — same quota artefact as the legend.
+    const trueCount = new Map((data.typeCounts ?? []).map((t) => [t.type, t.count]));
 
     const pos = new Map<string, Placed>();
     const columns: Column[] = groups.map((group, ci) => {
@@ -144,7 +162,7 @@ function SchemaGraphView({ data, namespace }: { data: GraphData; namespace: stri
       colNodes.forEach((node, ri) => {
         pos.set(node.id, { node, x, y: PAD + HEADER_H + ri * (CARD_H + CARD_GAP) });
       });
-      return { group, count: colNodes.length, nodes: colNodes, x };
+      return { group, count: trueCount.get(group) ?? colNodes.length, shown: colNodes.length, nodes: colNodes, x };
     });
 
     const maxRows = Math.max(1, ...columns.map((c) => c.nodes.length));

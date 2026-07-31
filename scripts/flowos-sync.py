@@ -104,7 +104,17 @@ QUERIES = [
    '. Position: '||COALESCE(NULLIF(u.position,''),'-')||'. Admin: '||u.is_admin||
    '. Account type: '||COALESCE(u.account_type::text,'-')||'. Joined '||to_char(u.created_at,'YYYY-MM-DD')||
    COALESCE('. GitHub: '||array_to_string(u.github_usernames,', '),'')||
-   COALESCE('. Offboarded '||to_char(u.offboarded_at,'YYYY-MM-DD'),'')
+   COALESCE('. Offboarded '||to_char(u.offboarded_at,'YYYY-MM-DD'),'')||
+   -- Which ventures this person actually works on, and what they own. Without this
+   -- a person memory is an isolated card and "who works on X" / "what does Y do"
+   -- can only be answered by the graph, never by recall.
+   COALESCE('. Works on: '||(SELECT string_agg(v.name||COALESCE(' ('||vm.role::text||')',''), ', '
+                             ORDER BY (vm.role::text='cofounder') DESC, v.name)
+                             FROM venture_members vm JOIN ventures v ON v.id=vm.venture_id
+                             WHERE vm.member_id::text=u.id::text AND vm.member_type::text='human'),'')||
+   COALESCE('. Owns: '||(SELECT string_agg(vr.owns||' in '||v.name,', ' ORDER BY v.name)
+                         FROM venture_responsibilities vr JOIN ventures v ON v.id=vr.venture_id
+                         WHERE vr.member_id::text=u.id::text AND NULLIF(vr.owns,'') IS NOT NULL),'')
  FROM users u WHERE u.deleted_at IS NULL"""),
 
 ("ventures", "flowos_venture", "venture", """
@@ -114,7 +124,17 @@ QUERIES = [
    '. On-hold: '||COALESCE(v.on_hold::text,'false')||'. Created '||to_char(v.created_at,'YYYY-MM-DD')||
    '. Tagline: '||COALESCE(v.tagline,'')||'. North star: '||COALESCE(v.north_star,'')||'. '||COALESCE(v.description,'')||
    COALESCE(' Website: '||v.website_url,'')||
-   COALESCE('. Team: '||(SELECT string_agg(u.display_name,', ') FROM venture_members vm JOIN users u ON u.id::text=vm.member_id::text WHERE vm.venture_id=v.id AND vm.member_type::text='user'),'')
+   -- member_type is the enum 'human'/'agent'; it is never 'user'. Matching 'user'
+   -- silently dropped every team from every venture memory, which is why questions
+   -- about the team / هيكل الشركة never resolved. Cofounders lead, then members.
+   COALESCE('. Team: '||(SELECT string_agg(u.display_name||COALESCE(' ('||vm.role::text||')',''), ', '
+                                           ORDER BY (vm.role::text='cofounder') DESC, u.display_name)
+                         FROM venture_members vm JOIN users u ON u.id::text=vm.member_id::text
+                         WHERE vm.venture_id=v.id AND vm.member_type::text='human'
+                           AND u.deleted_at IS NULL),'')||
+   COALESCE('. Agents on this venture: '||(SELECT string_agg(a.name,', ' ORDER BY a.name)
+                         FROM venture_members vm JOIN agents a ON a.id::text=vm.member_id::text
+                         WHERE vm.venture_id=v.id AND vm.member_type::text='agent'),'')
  FROM ventures v LEFT JOIN portfolios p ON p.id=v.portfolio_id"""),
 
 ("portfolios", "flowos_portfolio", "portfolio", """

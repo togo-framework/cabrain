@@ -30,11 +30,19 @@ export type NamespaceInfo = { namespace: string; memories: number; lastAt: strin
 // `group` is "root" | "type" | "<typename>" (used to color nodes).
 export type GraphNode = { id: string; name: string; group?: string };
 export type GraphEdge = { source: string; target: string };
+export type GraphTypeCount = { type: string; count: number };
 export type GraphData = {
   ready: boolean;
   derived?: boolean;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  // TRUE populations over the whole graph. `nodes`/`edges` are a capped sample
+  // (each type gets a quota of limit/#types), so never count them for display.
+  typeCounts?: GraphTypeCount[];
+  relationCounts?: GraphTypeCount[];
+  totalNodes?: number;
+  totalEdges?: number;
+  sampled?: boolean;
 };
 
 // A full memory row, as returned by GET /api/brain/memory?namespace&id.
