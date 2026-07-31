@@ -14,6 +14,11 @@ Edges     = memory -> every entity the source row actually references (author,
             venture, assignee, portfolio...), derived from real FKs.
 
 Idempotent: entities upsert on (namespace,name); edges upsert on the PK.
+
+NOTE: this builds the untyped memory<->entity mention index (memory_entities) only.
+The TYPED graph — entities.entity_type plus directed entity_edges with provenance
+(memory_id / episode_id / metadata.derived_from) — is built by
+scripts/flowos-graph-edges.py, which is the script to run for the graph proper.
 """
 import os
 from urllib.parse import urlparse
