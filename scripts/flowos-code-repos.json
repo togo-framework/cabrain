@@ -1,0 +1,40 @@
+{
+  "_comment": "Repos whose SOURCE CODE is indexed into the flowos brain. Selection: the ventures.github_url set from the FlowOS hub DB (products) + the top repos by commit count in github_commits (where the work actually happens). Resolved + verified with `gh api repos/<owner>/<name>` on 2026-07-30.",
+  "repos": [
+    { "repo": "onestudio-co/agents",                          "branch": "main",   "why": "venture:Flow OS; top-commits(1875)" },
+    { "repo": "onestudio-co/jadiroon",                        "branch": "main",   "why": "venture:Jaderoon; top-commits(1723)" },
+    { "repo": "sentra-intel/sentra",                          "branch": "master", "why": "top-commits(1498)" },
+    { "repo": "onestudio-co/revxai",                          "branch": "master", "why": "venture:RevXAI; top-commits(1270)" },
+    { "repo": "onestudio-co/ant-tadreeb",                     "branch": "main",   "why": "top-commits(1080)" },
+    { "repo": "XSpaceksa/xspace",                             "branch": "main",   "why": "top-commits(966)" },
+    { "repo": "x-arcom/aeroplane",                            "branch": "master", "why": "top-commits(1959)" },
+    { "repo": "x-arcom/member-plus-",                         "branch": "main",   "why": "venture:Member Plus; top-commits(669)" },
+    { "repo": "x-arcom/amos-clone",                           "branch": "main",   "why": "venture:Jood (Aref-Loyalty redirects here); top-commits(667+613)" },
+    { "repo": "x-arcom/MerchantOps-AI",                       "branch": "main",   "why": "top-commits(652)" },
+    { "repo": "onestudio-co/athar-demo",                      "branch": "main",   "why": "top-commits(521)" },
+    { "repo": "onestudio-co/flowos",                          "branch": "main",   "why": "top-commits(519)" },
+    { "repo": "sentra-intel/db",                              "branch": "master", "why": "top-commits(516)" },
+    { "repo": "ID8-Media/sentra",                             "branch": "master", "why": "venture:MOFA" },
+    { "repo": "onestudio-co/HubbleSalla",                     "branch": "main",   "why": "venture:Maksab" },
+    { "repo": "onestudio-co/CouponePlus",                     "branch": "master", "why": "venture:Wallet Plus" },
+    { "repo": "onestudio-co/weArt",                           "branch": "main",   "why": "venture:We Art" },
+    { "repo": "x-arcom/Whatsapp-Hero",                        "branch": "main",   "why": "venture:WhatsApp Hero" },
+    { "repo": "onestudio-co/reson8",                          "branch": "main",   "why": "venture:Reason8 Platform" },
+    { "repo": "onestudio-co/swarm-hub",                       "branch": "main",   "why": "venture:Swarm Hub" },
+    { "repo": "onestudio-co/shipgate",                        "branch": "main",   "why": "venture:Shipgate" },
+    { "repo": "onestudio-co/studio-rails",                    "branch": "main",   "why": "venture:Studio Rails" },
+    { "repo": "onestudio-co/studio-compliance-kit",           "branch": "master", "why": "venture:Seed-Stage PDPL Starter Kit" },
+    { "repo": "onestudio-co/claude-code-wrapper",             "branch": "main",   "why": "venture:Claude Code Wrapper" },
+    { "repo": "onestudio-exp/claude-code-arabic",             "branch": "main",   "why": "venture:Claude Code Arabic" },
+    { "repo": "onestudio-exp/domain-experts",                 "branch": "main",   "why": "venture:Domain Experts" },
+    { "repo": "onestudio-exp/status-reporter",                "branch": "main",   "why": "venture:Status Reporter" },
+    { "repo": "onestudio-exp/SADA-the-Advocacy-domain-expert","branch": "main",   "why": "venture:SADA" },
+    { "repo": "onestudio-exp/NEAF_Qatar_Economist_expert",    "branch": "main",   "why": "venture:NEAF" },
+    { "repo": "onestudio-os/flow-skills",                     "branch": "main",   "why": "venture:Flow Skills" },
+    { "repo": "Istedamah/lms-spec-v2",                        "branch": "main",   "why": "venture:Istedamah" }
+  ],
+  "excluded": [
+    { "repo": "x-arcom/cadox",     "why": "venture:CADO — gh api repos/x-arcom/cadox -> 404 (does not exist / no access)" },
+    { "repo": "sentra-intel/app",  "why": "top-commits(571) — gh api -> 404 (deleted or renamed)" }
+  ]
+}

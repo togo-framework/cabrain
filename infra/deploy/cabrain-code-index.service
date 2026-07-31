@@ -1,0 +1,15 @@
+[Unit]
+Description=CaBrain repomix code indexer — pack registered repos into the brain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/cabrain-code-index/env
+WorkingDirectory=/opt/cabrain-code-index
+ExecStart=/usr/bin/python3 /opt/cabrain-code-index/code-index.py run
+# Registry = the datasources table (kind=github, name code:<owner>/<repo>). Repos
+# whose HEAD sha is unchanged are skipped, so a full pass is cheap.
+TimeoutStartSec=5400
+Nice=15
+IOSchedulingClass=idle
