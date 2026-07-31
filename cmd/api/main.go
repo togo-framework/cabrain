@@ -92,6 +92,12 @@ func serveSPA(router interface {
 		}
 		p := filepath.Join(dist, filepath.Clean(r.URL.Path))
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			// Vite fingerprints these (index-7vWwHpKc.js), so a given URL's bytes never
+			// change — cache them hard. index.html is handled below and must NOT get
+			// this.
+			if strings.HasPrefix(r.URL.Path, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
 			fs.ServeHTTP(w, r)
 			return
 		}
@@ -106,6 +112,13 @@ func serveSPA(router interface {
 			http.NotFound(w, r)
 			return
 		}
+		// index.html is the ONLY unfingerprinted file, and it is what names the current
+		// asset bundle. Served with no Cache-Control (as it was), browsers fall back to
+		// heuristic caching off Last-Modified and keep re-using a stale shell — which
+		// then loads the PREVIOUS bundle long after a deploy. That is why a shipped UI
+		// fix kept appearing not to land: the API was correct, the new bundle was on
+		// disk, and the browser never asked for the shell again. Must-revalidate.
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		http.ServeFile(w, r, index)
 	}))
 }
