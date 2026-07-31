@@ -218,6 +218,17 @@ CREATE INDEX IF NOT EXISTS entity_edges_src  ON entity_edges (src_id) WHERE vali
 CREATE INDEX IF NOT EXISTS entity_edges_dst  ON entity_edges (dst_id) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS entity_edges_rel  ON entity_edges (namespace, relation) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS entity_edges_time ON entity_edges (namespace, valid_from, valid_to);
+-- Edges carry an embedding of their FACT, which is what makes the graph searchable
+-- by meaning ("who owns compliance?") rather than only by traversal from a known
+-- node. Without an ANN index that column is dead weight: every fact query degrades
+-- to a full scan over every live edge. Partial on the live set, matching how edges
+-- are always queried (valid_to IS NULL), so the index stays small as history grows.
+CREATE INDEX IF NOT EXISTS entity_edges_vec ON entity_edges
+  USING hnsw (embedding vector_cosine_ops) WHERE valid_to IS NULL;
+-- Provenance lookups: "which edges did this memory/episode produce?" is how a fact
+-- gets explained, and both were sequential scans.
+CREATE INDEX IF NOT EXISTS entity_edges_mem ON entity_edges (memory_id) WHERE memory_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS entity_edges_epi ON entity_edges (episode_id) WHERE episode_id IS NOT NULL;
 
 -- Episodes: the raw ingested unit. Every derived memory/edge traces back to one, so a
 -- fact can always be explained by the thing it came from.
