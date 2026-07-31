@@ -127,8 +127,21 @@ def month_end(first: dt.date) -> dt.date:
 
 
 def end_ts(d: dt.date) -> str:
-    return dt.datetime(d.year, d.month, d.day, 23, 59, 59,
-                       tzinfo=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """validAt for a period rollup — the period end, CLAMPED TO NOW.
+
+    A rollup is stamped at the end of the period it summarises so that recalls
+    ordered by event time put the newest week first. For the period still in
+    progress that end is in the FUTURE, and every recall bounded by `until=now`
+    (which is the default in practice) then silently drops the newest week —
+    the current partial week was stamped 2026-08-02 while the run was on
+    2026-07-31, so 48 rollups, including the whole newest leaderboard, were
+    invisible. Clamping here fixes it at the source instead of by hand.
+
+    Past periods are unaffected: their end is already < now.
+    """
+    end = dt.datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=dt.timezone.utc)
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    return min(end, now).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def listing(pairs, unit="", limit=4) -> str:
@@ -241,7 +254,8 @@ def build(duck, gh_login_to_user: dict, weeks: int, top: int, min_commits: int):
 
     out: list[tuple[dict, list]] = []
 
-    def add(ref, content, period, scope, valid, ents, extra=None, end=None):
+    def add(ref, content, period, scope, valid, ents, extra=None, end=None,
+            imp=0.55):
         if end is not None:
             content += partial(end)
         md = {"type": "activity-rollup", "period": period, "scope": scope}
@@ -249,7 +263,7 @@ def build(duck, gh_login_to_user: dict, weeks: int, top: int, min_commits: int):
         out.append(({
             "namespace": NS, "content": content, "sourceKind": SOURCE_KIND,
             "sourceRef": ref, "metadata": md, "validAt": valid,
-            "importanceHint": 0.55,
+            "importanceHint": imp,
         }, ents))
 
     # ---- 1. weekly per-repo commits -------------------------------------
@@ -424,6 +438,97 @@ def build(duck, gh_login_to_user: dict, weeks: int, top: int, min_commits: int):
             end_ts(week_end(wk)), ents,
             {"week": isoweek(wk), "commits": c, "people": ppl},
             end=week_end(wk))
+
+    # ---- 4b. weekly member leaderboard, MOST *and* LEAST active, BILINGUAL --
+    #
+    # Two separate bugs made "بناء على النشاط اخر اسبوع من اكثر الاعضاء النشطين
+    # واقل الاعضاء نشاط" (most/least active members last week) unanswerable even
+    # though every number for it was already in the brain:
+    #
+    #   1. Every rollup was English-only. Recall is vector + BM25, so an Arabic
+    #      question scored highest against the ARABIC TEXT SITTING INSIDE INDEXED
+    #      SOURCE CODE, and the correct rollups never surfaced. Writing the
+    #      summary in both languages is the fix that already took "ما هو هيكل
+    #      الشركة" from a random PR to rank 1 at 0.783.
+    #   2. The per-person rollups answer "most active" one person at a time; the
+    #      studio rollup lists only the top 5. Nothing stated the RANKING, and
+    #      nothing at all named the members with ZERO commits — who are exactly
+    #      what "أقل الأعضاء نشاطاً" asks for. A member missing from the commit
+    #      table is not absent from the roster; dropping them silently turns a
+    #      real answer into "no data".
+    #
+    # So: one memory per week holding the full ordered leaderboard, the inactive
+    # roster included, in English and Arabic.
+    roster = [r[0] for r in q("""
+        SELECT display_name FROM dim_users
+        WHERE deleted_at IS NULL AND offboarded_at IS NULL
+          AND display_name IS NOT NULL AND account_type = 'internal'
+        ORDER BY display_name
+    """)]
+    # 13 leaderboards with near-identical wording score within 0.02 of each other,
+    # so "last week" used to land on a random one (W19 came back first). Only the
+    # newest week is actually "last week" / "اخر اسبوع"; older ones are labelled
+    # historical and never claim the phrase. Cheap, and it is also just true.
+    latest_wk = max(pw.keys()) if pw else None
+    for wk in sorted(pw.keys()):
+        ranked = sorted(((nm, st[0]) for (w2, nm), st in pstat.items()
+                         if w2 == wk and st[0] > 0), key=lambda x: (-x[1], x[0]))
+        if not ranked:
+            continue
+        newest = wk == latest_wk
+        active = {nm for nm, _ in ranked}
+        idle = [r for r in roster if r not in active]
+        # `ranked` also contains bots and unmapped github logins, so it is NOT a
+        # subset of the roster — quoting "N of M on the roster" off len(ranked)
+        # would overcount. Count the intersection instead.
+        on_roster = sum(1 for r in roster if r in active)
+        end = week_end(wk)
+        note = partial(end)
+        top_line = "; ".join(f"{i+1}. {nm} — {n(c)} commits"
+                             for i, (nm, c) in enumerate(ranked))
+        bottom = ranked[-5:][::-1]
+        low_line = "; ".join(f"{nm} — {n(c)} commits" for nm, c in bottom)
+        idle_line = (", ".join(idle) if idle else "none")
+        head_en = ("LAST WEEK — the most recent week on record"
+                   if newest else "a past week (not the current one)")
+        head_ar = ("اخر اسبوع / آخر أسبوع — أحدث أسبوع مسجل"
+                   if newest else "أسبوع سابق (ليس الأسبوع الحالي)")
+        content = (
+            f"Member activity leaderboard, {head_en}: {wl(wk)} — who was most "
+            f"active and who was least active, ranked by commits.{note} "
+            f"MOST ACTIVE (full ranking, {len(ranked)} members with commits): "
+            f"{top_line}. "
+            f"LEAST ACTIVE among those who did commit: {low_line}. "
+            f"ZERO commits this week ({len(idle)} roster member(s), counted, not "
+            f"dropped): {idle_line}. "
+            f"Total {n(sum(c for _, c in ranked))} commits from {len(ranked)} "
+            f"committers, of whom {on_roster} of the {len(roster)} roster "
+            f"members committed and {len(idle)} did not.\n"
+            f"— بالعربية —\n"
+            f"ترتيب نشاط الأعضاء، {head_ar}: الأسبوع {isoweek(wk)} من "
+            f"{wk} إلى {end}. بناء على النشاط، أكثر الأعضاء نشاطاً "
+            f"(اكثر الاعضاء النشطين) و أقل الأعضاء نشاطاً (اقل الاعضاء نشاط) "
+            f"حسب عدد الكوميتات. "
+            f"الأكثر نشاطاً: "
+            + "؛ ".join(f"{i+1}. {nm} — {n(c)} كوميت"
+                        for i, (nm, c) in enumerate(ranked)) + ". "
+            f"الأقل نشاطاً ممن لديهم نشاط: "
+            + "؛ ".join(f"{nm} — {n(c)} كوميت" for nm, c in bottom) + ". "
+            f"أعضاء بدون أي نشاط هذا الأسبوع ({len(idle)} عضو): {idle_line}. "
+            f"إجمالي {n(sum(c for _, c in ranked))} كوميت من {len(ranked)} "
+            f"مساهم، منهم {on_roster} من أصل {len(roster)} عضو في الفريق، "
+            f"و {len(idle)} عضو بدون نشاط."
+        )
+        ents = [("person-name", nm) for nm, _ in ranked[:8]] + \
+               [("person-name", nm) for nm in idle[:4]]
+        add(f"rollup:leaderboard:studio:{isoweek(wk)}", content, "week",
+            "studio-leaderboard", end_ts(end), ents,
+            {"week": isoweek(wk), "signal": "leaderboard", "lang": "en+ar",
+             "activeMembers": len(ranked), "idleMembers": len(idle),
+             "rosterSize": len(roster),
+             "ranking": [{"person": nm, "commits": c} for nm, c in ranked],
+             "zeroCommit": idle, "latestWeek": newest},
+            imp=0.72 if newest else 0.55)
 
     # ---- 5. weekly studio-wide Claude -------------------------------------
     for wk, e, ses, act, tok, cache in q("""
@@ -662,6 +767,8 @@ def family(ref: str) -> str:
         return "weekly-studio-claude" if p[2] == "studio" else "weekly-person-claude"
     if p[1] == "person-commits":
         return "weekly-person-commits"
+    if p[1] == "leaderboard":
+        return "weekly-leaderboard"
     return "monthly-studio"
 
 
@@ -686,6 +793,14 @@ def main() -> int:
                     help="content-hash file used to skip unchanged rollups")
     ap.add_argument("--force", action="store_true",
                     help="re-retain every rollup even if its text is unchanged")
+    ap.add_argument("--only", action="append", metavar="FAMILY",
+                    help="restrict to one rollup family (repeatable): "
+                         "weekly-repo-commits, weekly-person-commits, "
+                         "weekly-person-claude, weekly-studio-commits, "
+                         "weekly-studio-claude, weekly-leaderboard, "
+                         "monthly-org-commits, monthly-studio. Retain SUPERSEDES "
+                         "(new row id) so a blind full run orphans memory_entities; "
+                         "--only keeps a targeted refresh targeted.")
     args = ap.parse_args()
 
     duck = duckdb.connect(args.db, read_only=True)
@@ -699,6 +814,9 @@ def main() -> int:
     gh_map = github_login_map()
 
     recs = build(duck, gh_map, args.weeks, args.top, args.min_commits)
+    if args.only:
+        want = set(args.only)
+        recs = [(r, e) for r, e in recs if family(r["sourceRef"]) in want]
     kinds = defaultdict(int)
     for r, _ in recs:
         kinds[family(r["sourceRef"])] += 1

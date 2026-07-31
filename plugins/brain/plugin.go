@@ -118,6 +118,9 @@ func init() {
 		// Graph plane — multi-hop traversal, typed neighbours, shortest path,
 		// community detection and ontology discovery, all in Postgres.
 		k.Router.Post("/api/brain/graph/traverse", secured(svc.TraverseHandler))
+		// The spine: one entity's whole neighbourhood, grouped by role, in one call.
+		k.Router.Post("/api/brain/graph/spine", secured(svc.SpineHandler))
+		k.Router.Get("/api/brain/graph/spine", secured(svc.SpineHandler))
 		k.Router.Post("/api/brain/graph/neighbors", secured(svc.NeighborsHandler))
 		k.Router.Post("/api/brain/graph/path", secured(svc.PathHandler))
 		k.Router.Post("/api/brain/graph/communities", secured(svc.CommunitiesHandler))

@@ -107,6 +107,27 @@ var toolDefs = []map[string]any{
 		}, "namespace", "entity"),
 	},
 	{
+		"name": "graph_spine",
+		"description": "EVERYTHING about one venture (or portfolio, repo, person) in ONE call, grouped by role — " +
+			"repos, members, recent activity, feed, goals, OKRs, roadmap, code modules, docs, learnings, issues, " +
+			"meetings, channels. Each group reports the TRUE total next to a capped sample, so a short list is " +
+			"never mistaken for the whole population. Use `window` (\"7d\", \"2w\") for time-boxed questions such as " +
+			"'what happened on venture X last week' — the window binds the event-bearing roles (activity, meeting, " +
+			"channel, feed) and deliberately leaves structural roles alone. Prefer this over several graph_traverse calls.",
+		"inputSchema": obj(prop{
+			"namespace": prop{"type": "string"},
+			"entity":    prop{"type": "string", "description": "venture/portfolio name (or any entity name or id)"},
+			"depth":     prop{"type": "integer", "description": "hops, default 2 (use 3 for a portfolio), max 4"},
+			"hubs":      prop{"type": "array", "items": prop{"type": "string"}, "description": "entity types expanded past hop 1; default repo,venture,feed,portfolio"},
+			"roles":     prop{"type": "array", "items": prop{"type": "string"}, "description": "only return these role groups"},
+			"perGroup":  prop{"type": "integer", "description": "cap per group, default 10, max 200 (total is always the true count)"},
+			"window":    prop{"type": "string", "description": "relative window: 24h, 7d, 2w, 3m"},
+			"since":     prop{"type": "string", "description": "RFC3339 lower bound (overrides window)"},
+			"until":     prop{"type": "string", "description": "RFC3339 upper bound"},
+			"timeRoles": prop{"type": "array", "items": prop{"type": "string"}, "description": "roles the window applies to; [\"*\"] = all"},
+		}, "namespace", "entity"),
+	},
+	{
 		"name": "graph_neighbors",
 		"description": "Immediate typed relationships of one entity, each with its relation, direction and a " +
 			"human-readable fact. Use to explain HOW something is connected.",

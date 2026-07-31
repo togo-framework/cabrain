@@ -207,6 +207,12 @@ func (s *server) callTool(req *rpcReq) {
 			"namespace": args["namespace"], "entity": args["entity"], "depth": args["depth"],
 			"relations": args["relations"], "types": args["types"],
 			"direction": args["direction"], "asOf": args["asOf"], "limit": args["limit"]})
+	case "graph_spine":
+		body, code, err = s.post("/api/brain/graph/spine", map[string]any{
+			"namespace": args["namespace"], "entity": args["entity"], "depth": args["depth"],
+			"hubs": args["hubs"], "roles": args["roles"], "perGroup": args["perGroup"],
+			"window": args["window"], "since": args["since"], "until": args["until"],
+			"timeRoles": args["timeRoles"]})
 	case "graph_neighbors":
 		body, code, err = s.post("/api/brain/graph/neighbors", map[string]any{
 			"namespace": args["namespace"], "entity": args["entity"], "asOf": args["asOf"]})
