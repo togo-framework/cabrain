@@ -62,6 +62,7 @@ ENTITY_TYPES = [
     ("campaign", "A marketing campaign"),
     ("channel", "A discussion channel"),
     ("meeting", "A calendar event or recorded meeting"),
+    ("issue", "A tracked issue that carries a discussion thread"),
 ]
 EDGE_TYPES = [
     ("BELONGS_TO", "venture is part of a portfolio", "venture", "portfolio"),
@@ -87,6 +88,12 @@ EDGE_TYPES = [
     ("ATTENDED", "person attended a meeting", "person", "meeting"),
     ("MEETING_ABOUT", "meeting concerns a venture", "meeting", "venture"),
     ("ATTENDED_WITH", "two people were in the same meeting", "person", "person"),
+    # --- added with the issue_comments / agent_actions / pull-request roll-ups ---
+    ("ISSUE_IN", "issue belongs to a venture", "issue", "venture"),
+    ("DISCUSSED_IN", "person commented in an issue discussion", "person", "issue"),
+    ("AGENT_DISCUSSED_IN", "agent commented in an issue discussion", "agent", "issue"),
+    ("ACTED_ON", "agent took recorded actions on a venture", "agent", "venture"),
+    ("AUTHORED_PR_IN", "person opened pull requests in a repo", "person", "repo"),
 ]
 
 
@@ -265,6 +272,53 @@ def main():
         slug = str(url).rstrip("/").split("github.com/")[-1]
         if slug in repos:
             E(("repo", slug), ("venture", vid), "REPO_OF", f"{slug} is the codebase of {nm('venture', vid)}")
+
+    # ---- issue discussion threads (issue_comments 2,339) ----------------------
+    # Only issues that actually carry a substantive thread become nodes — that is
+    # exactly the set ingested as db:issue-thread:<id>, so every node here has a
+    # memory behind it. Silent issues stay out of the graph.
+    threaded = s.run("""SELECT c.issue_id, i.number, i.title, i.venture_id, min(c.created_at)
+                          FROM issue_comments c JOIN issues i ON i.id=c.issue_id
+                         WHERE length(COALESCE(c.body_md,'')) >= 40
+                         GROUP BY 1,2,3,4""")
+    for iid, num, title, vid, _first in threaded:
+        node("issue", iid, clean(f"Issue #{num} · {clean(title, 60)}"))
+    for iid, num, title, vid, first in threaded:
+        if vid:
+            E(("issue", iid), ("venture", vid), "ISSUE_IN",
+              f"Issue #{num} '{clean(title,50)}' belongs to {nm('venture', vid)}", first)
+    for iid, uid, aid, at in s.run("""SELECT c.issue_id, c.author_user_id, c.as_agent_id, min(c.created_at)
+                                        FROM issue_comments c
+                                       WHERE length(COALESCE(c.body_md,'')) >= 40
+                                       GROUP BY 1,2,3"""):
+        if uid:
+            E(("person", uid), ("issue", iid), "DISCUSSED_IN",
+              f"{nm('person', uid)} commented on {nm('issue', iid)}", at)
+        if aid:
+            E(("agent", aid), ("issue", iid), "AGENT_DISCUSSED_IN",
+              f"{nm('agent', aid)} commented on {nm('issue', iid)}", at)
+
+    # ---- what agents actually DID (agent_actions 3,888, aggregated) ------------
+    for aid, vid, n_, first, last in s.run("""SELECT agent_id, venture_id, count(*),
+                                                     min(created_at), max(created_at)
+                                                FROM agent_actions
+                                               WHERE venture_id IS NOT NULL GROUP BY 1,2"""):
+        E(("agent", aid), ("venture", vid), "ACTED_ON",
+          f"{nm('agent', aid)} recorded {n_} action(s) on {nm('venture', vid)} "
+          f"between {str(first)[:10]} and {str(last)[:10]}", first)
+
+    # ---- who opens pull requests where (github_pull_requests 1,948) -----------
+    # NOTE: deliberately NOT a REVIEWED edge. github_pull_requests stores
+    # first_review_at but no reviewer identity, so "X reviewed Y" is not derivable
+    # from this table and is not invented here.
+    for rp, login, n_, last in s.run("""SELECT repo_full_name, author_login, count(*), max(created_at)
+                                          FROM github_pull_requests
+                                         WHERE author_login IS NOT NULL GROUP BY 1,2"""):
+        node("repo", rp, rp)
+        uid = login2user.get(str(login).lower())
+        if uid:
+            E(("person", uid), ("repo", rp), "AUTHORED_PR_IN",
+              f"{nm('person', uid)} opened {n_} pull request(s) in {rp} (last {str(last)[:10]})", last)
 
     # ---- claude usage rolled onto the person node -----------------------------
     for uid, n_, _last in s.run("""SELECT user_id, count(*), max(created_at) FROM claude_activity_events

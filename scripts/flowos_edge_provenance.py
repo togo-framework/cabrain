@@ -149,6 +149,35 @@ FAMILIES = [
 
     # Co-attendance: derived by pairing attendees of the same event. Direction is
     # arbitrary, and a pair that met repeatedly has many source events.
+    dict(relation="ISSUE_IN", src="issue", dst="venture",
+         table="issues", ref_kind="issue",
+         sql="SELECT id, venture_id, id FROM issues WHERE venture_id IS NOT NULL"),
+
+    dict(relation="DISCUSSED_IN", src="person", dst="issue",
+         table="issue_comments", ref_kind="issue-thread",
+         sql="""SELECT author_user_id, issue_id, issue_id FROM issue_comments
+                 WHERE author_user_id IS NOT NULL AND length(COALESCE(body_md,'')) >= 40"""),
+
+    dict(relation="AGENT_DISCUSSED_IN", src="agent", dst="issue",
+         table="issue_comments", ref_kind="issue-thread",
+         sql="""SELECT as_agent_id, issue_id, issue_id FROM issue_comments
+                 WHERE as_agent_id IS NOT NULL AND length(COALESCE(body_md,'')) >= 40"""),
+
+    # agent_actions rows are never ingested one-per-row (they are rolled up per
+    # agent x venture x week), so no single source record can back this edge.
+    dict(relation="ACTED_ON", src="agent", dst="venture",
+         table="agent_actions", ref_kind=None,
+         sql="""SELECT agent_id, venture_id, id FROM agent_actions
+                 WHERE venture_id IS NOT NULL"""),
+
+    dict(relation="AUTHORED_PR_IN", src="person", dst="repo",
+         table="github_pull_requests", ref_kind=None,
+         sql="""SELECT u.id, pr.repo_full_name, pr.id
+                  FROM github_pull_requests pr
+                  JOIN users u ON lower(pr.author_login) =
+                       ANY (SELECT lower(x) FROM unnest(u.github_usernames) x)
+                 WHERE pr.author_login IS NOT NULL"""),
+
     dict(relation="ATTENDED_WITH", src="person", dst="person", symmetric=True,
          table="calendar_event_attendees", ref_kind="calendar-event",
          sql="""SELECT a.user_id, c.user_id, a.event_id
