@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,24 +108,127 @@ func crawlerConnector(ctx context.Context, cfg map[string]any, _ string) ([]Docu
 		Metadata: map[string]any{"type": "doc", "title": title, "url": url}}}, "", nil
 }
 
-// --- github: config { repo, branch?, path?, ext?, token? } --------------------
-// Ingests text/markdown files from a repo tree (how AVO was loaded).
+// --- github: config { repo, branch?, path?, ext?, exclude?, maxBytes?, maxDocs?,
+//                      token? } ------------------------------------------------
+// Ingests text files from a repo tree (how AVO was loaded). `ext` accepts EITHER a
+// single suffix (".md", the default — docs-only, the original behaviour) OR a list
+// / comma-separated string of suffixes (".go,.ts,.sql") so a repo's SOURCE CODE can
+// be indexed without creating one datasource per extension.
+//
+// Indexing code needs three guards that docs never did, or a sync drowns the brain
+// in vendored/minified/generated text:
+//   - `exclude`: extra path substrings to drop, ON TOP of ghSkipDirs (node_modules,
+//     vendor, dist, .next, testdata, …) and lock/minified/generated file names.
+//   - `maxBytes`: per-file size ceiling from the tree listing (default 60_000) — a
+//     500KB bundle is noise, and embedding it costs the same as 30 real files.
+//   - `maxDocs`: per-sync file ceiling (default 500).
+//
+// Event time: every document is stamped with the repo's pushed_at instead of now(),
+// so an import doesn't collapse the whole history onto the ingest date. With
+// `fileDates: true` each file gets its own last-commit date (one extra API call per
+// file — accurate, but only worth it under a small maxDocs).
+
+// ghSkipDirs are path segments that never carry hand-written knowledge.
+var ghSkipDirs = []string{
+	"node_modules/", "vendor/", "/dist/", "dist/", "build/", ".next/", "out/",
+	"testdata/", "__pycache__/", ".venv/", "coverage/", "third_party/",
+	".git/", "public/build/", "storage/framework/", "__snapshots__/",
+}
+
+// ghSkipFile matches generated / lock / minified files by name.
+func ghSkipFile(p string) bool {
+	lp := strings.ToLower(p)
+	base := lp
+	if i := strings.LastIndex(lp, "/"); i >= 0 {
+		base = lp[i+1:]
+	}
+	switch {
+	case strings.HasSuffix(base, ".lock"), strings.HasSuffix(base, "-lock.json"),
+		base == "package-lock.json", base == "yarn.lock", base == "composer.lock",
+		base == "pnpm-lock.yaml", base == "go.sum":
+		return true
+	case strings.Contains(base, ".min."), strings.Contains(base, ".gen."),
+		strings.HasSuffix(base, ".generated.ts"), strings.HasSuffix(base, "_test.go"),
+		strings.HasSuffix(base, ".d.ts"):
+		return true
+	}
+	for _, d := range ghSkipDirs {
+		if strings.Contains(lp, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// cfgList reads a config value that may be a JSON array, a comma-separated string,
+// or a single string, and returns it as a trimmed, lower-cased slice.
+func cfgList(cfg map[string]any, k string) []string {
+	var out []string
+	add := func(s string) {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			out = append(out, s)
+		}
+	}
+	switch v := cfg[k].(type) {
+	case string:
+		for _, p := range strings.Split(v, ",") {
+			add(p)
+		}
+	case []string:
+		for _, p := range v {
+			add(p)
+		}
+	case []any:
+		for _, p := range v {
+			if s, ok := p.(string); ok {
+				add(s)
+			}
+		}
+	}
+	return out
+}
+
+func cfgInt(cfg map[string]any, k string, def int) int {
+	switch v := cfg[k].(type) {
+	case float64:
+		if int(v) > 0 {
+			return int(v)
+		}
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
 
 func githubConnector(ctx context.Context, cfg map[string]any, _ string) ([]Document, string, error) {
 	repo := cfgStr(cfg, "repo") // owner/name
 	if repo == "" {
 		return nil, "", errors.New("github source: config.repo (owner/name) is empty")
 	}
+	token := cfgStr(cfg, "token")
 	branch := cfgStr(cfg, "branch")
+	pushedAt, defBranch := ghRepoMeta(ctx, repo, token)
+	if branch == "" {
+		branch = defBranch
+	}
 	if branch == "" {
 		branch = "main"
 	}
 	pathPrefix := cfgStr(cfg, "path")
-	ext := cfgStr(cfg, "ext")
-	if ext == "" {
-		ext = ".md"
+	exts := cfgList(cfg, "ext")
+	if len(exts) == 0 {
+		exts = []string{".md"}
 	}
-	token := cfgStr(cfg, "token")
+	exclude := cfgList(cfg, "exclude")
+	maxBytes := cfgInt(cfg, "maxBytes", 60000)
+	maxDocs := cfgInt(cfg, "maxDocs", 500)
+	fileDates, _ := cfg["fileDates"].(bool)
 
 	treeURL := fmt.Sprintf("https://api.github.com/repos/%s/git/trees/%s?recursive=1", repo, branch)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, treeURL, nil)
@@ -144,6 +249,7 @@ func githubConnector(ctx context.Context, cfg map[string]any, _ string) ([]Docum
 		Tree []struct {
 			Path string `json:"path"`
 			Type string `json:"type"`
+			Size int    `json:"size"`
 		} `json:"tree"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tree); err != nil {
@@ -151,10 +257,34 @@ func githubConnector(ctx context.Context, cfg map[string]any, _ string) ([]Docum
 	}
 	var docs []Document
 	for _, e := range tree.Tree {
-		if e.Type != "blob" || !strings.HasSuffix(strings.ToLower(e.Path), ext) {
+		if e.Type != "blob" {
+			continue
+		}
+		lp := strings.ToLower(e.Path)
+		matched := false
+		for _, x := range exts {
+			if strings.HasSuffix(lp, x) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			continue
 		}
 		if pathPrefix != "" && !strings.HasPrefix(e.Path, pathPrefix) {
+			continue
+		}
+		if ghSkipFile(e.Path) {
+			continue
+		}
+		skip := false
+		for _, x := range exclude {
+			if strings.Contains(lp, x) {
+				skip = true
+				break
+			}
+		}
+		if skip || (e.Size > 0 && e.Size > maxBytes) {
 			continue
 		}
 		rawURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s", repo, branch, e.Path)
@@ -162,18 +292,78 @@ func githubConnector(ctx context.Context, cfg map[string]any, _ string) ([]Docum
 		if err != nil || strings.TrimSpace(content) == "" {
 			continue
 		}
+		validAt := pushedAt
+		if fileDates {
+			if t := ghFileDate(ctx, repo, e.Path, token); t != nil {
+				validAt = t
+			}
+		}
 		docs = append(docs, Document{
 			ExternalID: rawURL, Content: content, SourceRef: repo + "/" + e.Path,
+			ValidAt:  validAt,
 			Metadata: map[string]any{"type": "doc", "title": e.Path, "repo": repo, "path": e.Path},
 		})
-		if len(docs) >= 500 { // safety cap per sync
+		if len(docs) >= maxDocs { // safety cap per sync
 			break
 		}
 	}
 	if len(docs) == 0 {
-		return nil, "", fmt.Errorf("github: no %s files under %q in %s@%s", ext, pathPrefix, repo, branch)
+		return nil, "", fmt.Errorf("github: no %v files under %q in %s@%s", exts, pathPrefix, repo, branch)
 	}
 	return docs, "", nil
+}
+
+// ghRepoMeta returns the repo's pushed_at (event time for its files) and default
+// branch. Best-effort: on any error the caller falls back to now()/"main".
+func ghRepoMeta(ctx context.Context, repo, token string) (*time.Time, string) {
+	var out struct {
+		PushedAt      time.Time `json:"pushed_at"`
+		DefaultBranch string    `json:"default_branch"`
+	}
+	if err := ghJSON(ctx, "https://api.github.com/repos/"+repo, token, &out); err != nil {
+		return nil, ""
+	}
+	if out.PushedAt.IsZero() {
+		return nil, out.DefaultBranch
+	}
+	return &out.PushedAt, out.DefaultBranch
+}
+
+// ghFileDate returns a file's last-commit date (one API call).
+func ghFileDate(ctx context.Context, repo, path, token string) *time.Time {
+	var out []struct {
+		Commit struct {
+			Committer struct {
+				Date time.Time `json:"date"`
+			} `json:"committer"`
+		} `json:"commit"`
+	}
+	u := fmt.Sprintf("https://api.github.com/repos/%s/commits?per_page=1&path=%s", repo, url.QueryEscape(path))
+	if err := ghJSON(ctx, u, token, &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	d := out[0].Commit.Committer.Date
+	if d.IsZero() {
+		return nil
+	}
+	return &d
+}
+
+func ghJSON(ctx context.Context, u, token string, dst any) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("github: %s -> http %d", u, resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(dst)
 }
 
 func fetchText(ctx context.Context, url, token string) (string, error) {

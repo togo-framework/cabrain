@@ -28,6 +28,10 @@ type Document struct {
 	Content    string         // the text to remember
 	SourceRef  string         // provenance (url, file path, row id, …)
 	Metadata   map[string]any // free-form (title, tags, type, …)
+	// ValidAt is the document's EVENT time at the source (a file's last-commit
+	// date, a row's created_at). Nil → now(). Without it a whole repo/table lands
+	// on the ingest timestamp and "what changed last week" is unanswerable.
+	ValidAt *time.Time
 }
 
 // Connector pulls documents from an external source. cfg is the source's stored
@@ -216,13 +220,14 @@ func (s *Store) SyncDatasource(ctx context.Context, id string) (*SyncResult, err
 func (s *Store) ingestDocuments(ctx context.Context, ds *Datasource, docs []Document) int {
 	n := 0
 	for _, d := range docs {
-		for i, chunk := range chunkText(d.Content, 1600) {
+		chunks := chunkText(d.Content, 1600)
+		for i, chunk := range chunks {
 			meta := map[string]any{"datasource": ds.Name, "datasourceKind": ds.Kind}
 			for k, v := range d.Metadata {
 				meta[k] = v
 			}
 			ref := d.SourceRef
-			if len(chunkText(d.Content, 1600)) > 1 {
+			if len(chunks) > 1 {
 				ref = d.SourceRef + "#" + strconv.Itoa(i)
 			}
 			_, err := s.Retain(ctx, MemoryInput{
@@ -231,6 +236,7 @@ func (s *Store) ingestDocuments(ctx context.Context, ds *Datasource, docs []Docu
 				SourceKind: "datasource:" + ds.Kind,
 				SourceRef:  ref,
 				Metadata:   meta,
+				ValidAt:    d.ValidAt,
 			})
 			if err == nil {
 				n++
