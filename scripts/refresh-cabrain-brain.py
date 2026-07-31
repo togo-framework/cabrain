@@ -10,26 +10,47 @@ Ingests (into namespace `cabrain`, deduped by the §4.1 write-decision):
 Usage:  python3 scripts/refresh-cabrain-brain.py
         CABRAIN_API_URL=http://localhost:8080 (default)
 """
-import json, os, re, subprocess, urllib.request
+import json, os, re, subprocess, time, urllib.error, urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = os.environ.get("CABRAIN_API_URL", "http://localhost:8080")
 NS = "cabrain"
 MAXC = 2500
 EXCLUDE_DIRS = {"node_modules", "dist", "worktrees", "scratchpad", ".git"}
+ERRORS = []   # every failed retain, so a broken run can never look like an empty one
 
 def retain(content, ref, meta):
     body = json.dumps({"namespace": NS, "content": content[:6000], "sourceKind": meta.get("_sk", "cabrain_repo"),
                        "sourceRef": ref, "metadata": {k: v for k, v in meta.items() if not k.startswith("_")}}).encode()
-    req = urllib.request.Request(API + "/api/brain/retain", data=body, headers={"Content-Type": "application/json"})
+    # An explicit User-Agent is REQUIRED, not cosmetic: the hosted brain sits behind
+    # Cloudflare, which 403s urllib's default "Python-urllib/3.x". Combined with the
+    # bare except below this failed completely silently — every run reported
+    # "docs: 0, commits: 0, history: 0" and looked like a no-op with nothing new to
+    # say, while in fact not one write had ever landed.
+    req = urllib.request.Request(API + "/api/brain/retain", data=body, headers={
+        "Content-Type": "application/json", "User-Agent": "cabrain-refresh/1.0"})
     tok = os.environ.get("CABRAIN_TOKEN")
     if tok:
         req.add_header("X-Cabrain-Token", tok)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read()).get("decision", "?")
-    except Exception:
-        return "ERR"
+    # Retry the transient ones. A refresh is a few hundred sequential HTTPS calls, so
+    # the occasional read timeout / SSL EOF / dropped keep-alive is expected; without
+    # a retry those show up as permanently missing docs and commits. A 403 is not
+    # transient, so give up on it immediately rather than hammering.
+    last = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.loads(r.read()).get("decision", "?")
+        except urllib.error.HTTPError as e:
+            last = e
+            break
+        except Exception as e:
+            last = e
+            time.sleep(2 * (attempt + 1))
+    # Surface the reason. A silent "ERR" that the caller counts as "nothing to
+    # do" is how this rotted unnoticed in the first place.
+    ERRORS.append(f"{ref}: {type(last).__name__} {getattr(last, 'code', '')} {str(last)[:80]}")
+    return "ERR"
 
 def chunks(text):
     parts = re.split(r'(?m)^(?=#{1,3} )', text)
@@ -95,7 +116,15 @@ def main():
                 n_hist += 1
         print("history:", n_hist, flush=True)
 
-    print("DONE:", json.dumps({"docs": n_doc, "commits": n_commit, "history": n_hist}), flush=True)
+    print("DONE:", json.dumps({"docs": n_doc, "commits": n_commit, "history": n_hist,
+                               "errors": len(ERRORS)}), flush=True)
+    if ERRORS:
+        # Loud and non-zero. "Refreshed 0 things" must never again be indistinguishable
+        # from "every single write was rejected".
+        print(f"\n!! {len(ERRORS)} retain(s) FAILED — the brain was NOT refreshed. First 5:", flush=True)
+        for e in ERRORS[:5]:
+            print("   ", e, flush=True)
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     main()
