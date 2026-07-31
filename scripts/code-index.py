@@ -849,6 +849,70 @@ def cmd_run(args):
     return results
 
 
+# ----------------------------------------------------------------- candidates --
+# 459 repos exist across the FlowOS orgs but only ~33 are indexed. Indexing all of
+# them would drown recall (this brain has been drowned twice already), so this
+# command only SURFACES the gap: repos that received commits recently but are not
+# in the registry. It writes ONE rollup memory, never one per repo, and never
+# registers anything by itself — `code-index.py add <repo>` stays a human choice.
+def cmd_candidates(args):
+    dsn = os.environ.get("FLOWOS_DSN", "")
+    if not dsn:
+        sys.exit("FLOWOS_DSN must be set (read-only FlowOS prod) for `candidates`")
+    import pg8000.native as pg
+    from urllib.parse import urlparse
+    u = urlparse(dsn)
+    c = pg.Connection(user=u.username, password=u.password, host=u.hostname,
+                      port=u.port or 5432, database=(u.path or "/").lstrip("/"))
+    try:
+        c.run("BEGIN READ ONLY")          # prod is strictly read-only to us
+        rows = c.run("""
+            SELECT repo_full_name, count(*), max(authored_at),
+                   count(DISTINCT author_login)
+            FROM github_commits
+            WHERE authored_at >= now() - make_interval(days => :d)
+            GROUP BY 1 ORDER BY 2 DESC""", d=args.days)
+        c.run("ROLLBACK")
+    finally:
+        c.close()
+
+    known = {(ds["config"].get("repo") or "").lower() for ds in registry()}
+    miss = [r for r in rows if r[0] and r[0].lower() not in known]
+    log("%d repos with commits in the last %d days; %d registered, %d NOT indexed"
+        % (len(rows), args.days, len(rows) - len(miss), len(miss)))
+    log("%-40s %8s %8s  %s" % ("REPO", "COMMITS", "AUTHORS", "LAST COMMIT"))
+    for name, n, last, authors in miss[:args.top]:
+        log("%-40s %8d %8d  %s" % (name, n, authors, last))
+
+    if args.dry_run:
+        return
+    top = miss[:args.top]
+    if not top:
+        body = ("Code-index coverage: every FlowOS repo with commits in the last "
+                "%d days is already registered for repomix indexing." % args.days)
+    else:
+        body = (
+            "Code-index coverage gap as of %s: %d GitHub repositories received "
+            "commits in the last %d days and are NOT in the CaBrain code-index "
+            "registry, so their source code is absent from the brain. Most active "
+            "unindexed: %s. Register one with `code-index.py add <owner>/<repo>`; "
+            "they are deliberately NOT auto-indexed because bulk-indexing every "
+            "repo crowds operational memories out of recall."
+            % (dt_now().strftime("%Y-%m-%d"), len(miss), args.days,
+               "; ".join("%s (%d commits by %d authors, last %s)"
+                         % (r[0], r[1], r[3], r[2].strftime("%Y-%m-%d"))
+                         for r in top)))
+    mid, dec = retain(body, "code:index-coverage-gap", "flowos_code_coverage",
+                      {"type": "code-coverage", "unindexed": len(miss),
+                       "window_days": args.days},
+                      dt_now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+    log("coverage memory %s (%s)" % (mid, dec))
+
+
+def dt_now():
+    return datetime.now(timezone.utc)
+
+
 def main():
     ap = argparse.ArgumentParser(description="CaBrain repomix code indexer")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -873,6 +937,12 @@ def main():
     g = sub.add_parser("graph", help="rebuild entities/edges/links from the DB (catch-up)")
     g.add_argument("--repo")
     g.set_defaults(func=cmd_graph)
+    cd = sub.add_parser("candidates",
+                        help="active repos that are NOT code-indexed (surface, don't index)")
+    cd.add_argument("--days", type=int, default=14)
+    cd.add_argument("--top", type=int, default=15, help="how many to name in the memory")
+    cd.add_argument("--dry-run", action="store_true", help="print only, write nothing")
+    cd.set_defaults(func=cmd_candidates)
     args = ap.parse_args()
     args.func(args)
 

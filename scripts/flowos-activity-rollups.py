@@ -60,6 +60,38 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB = os.path.join(REPO_ROOT, "data", "flowos-analytics.duckdb")
 NS = os.environ.get("FLOWOS_NAMESPACE", "flowos")
 SOURCE_KIND = "flowos_activity_rollup"
+
+
+# --------------------------------------------------------------- write gating
+# /api/brain/retain does NOT mutate a row in place: a repeat sourceRef SUPERSEDES
+# (soft-retires the old row, inserts a new one with a NEW id). Two consequences
+# make blind re-retaining unsafe on a timer:
+#   * memories grows by one retired row per rollup per run, and
+#   * memory_entities rows still point at the OLD id, so the rollup silently
+#     drops out of the entity graph.
+# Only the current week/month actually change between runs, so we hash each
+# rollup's content and re-retain ONLY what really moved. Same idea as the
+# sha-gating in code-index.py, and it works with no brain DSN.
+def content_hash(rec: dict) -> str:
+    import hashlib
+    return hashlib.sha256(rec["content"].encode("utf-8")).hexdigest()[:16]
+
+
+def load_hashes(path: str) -> dict:
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("hashes", {})
+    except Exception:
+        return {}
+
+
+def save_hashes(path: str, hashes: dict) -> None:
+    tmp = path + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(tmp, "w") as fh:
+        json.dump({"updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                   "hashes": hashes}, fh)
+    os.replace(tmp, path)
 MONTHS = ["", "January", "February", "March", "April", "May", "June", "July",
           "August", "September", "October", "November", "December"]
 
@@ -107,13 +139,24 @@ def listing(pairs, unit="", limit=4) -> str:
 
 # ------------------------------------------------------------------ brain io
 class Brain:
-    def __init__(self, api: str, token: str, dsn: str):
+    """Retain goes over HTTPS; the graph work needs a direct brain DSN.
+
+    CABRAIN_DSN is OPTIONAL. The brain Postgres is not reachable from every host
+    that can run this job (the deployed timer box reaches the API but not the
+    database), so with no DSN we still refresh every rollup's *content* through
+    the API and simply skip the entity linking / USED_AI_ON edges. `self.db is
+    None` is the flag for that degraded-but-useful mode.
+    """
+
+    def __init__(self, api: str, token: str, dsn: str = ""):
         self.api, self.token = api.rstrip("/"), token
-        u = urlparse(dsn)
-        self.db = pg.Connection(user=u.username, password=u.password,
-                                host=u.hostname, port=u.port or 5432,
-                                database=(u.path or "/").lstrip("/"))
-        self.db.run("SET search_path = public")
+        self.db = None
+        if dsn:
+            u = urlparse(dsn)
+            self.db = pg.Connection(user=u.username, password=u.password,
+                                    host=u.hostname, port=u.port or 5432,
+                                    database=(u.path or "/").lstrip("/"))
+            self.db.run("SET search_path = public")
 
     def retain(self, rec: dict) -> str | None:
         """POST one rollup. curl, not urllib: Cloudflare 403s the urllib UA."""
@@ -636,6 +679,13 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="build and print the rollups, write nothing")
     ap.add_argument("--limit", type=int, help="only retain the first N (smoke test)")
+    ap.add_argument("--state",
+                    default=os.environ.get("ROLLUPS_STATE",
+                                           os.path.join(REPO_ROOT, "data",
+                                                        "rollups-state.json")),
+                    help="content-hash file used to skip unchanged rollups")
+    ap.add_argument("--force", action="store_true",
+                    help="re-retain every rollup even if its text is unchanged")
     args = ap.parse_args()
 
     duck = duckdb.connect(args.db, read_only=True)
@@ -643,8 +693,8 @@ def main() -> int:
     api = os.environ.get("CABRAIN_API", "https://cabrain.fadymondy.com")
     token = os.environ.get("CABRAIN_TOKEN", "")
     dsn = os.environ.get("CABRAIN_DSN", "")
-    if not args.dry_run and not (token and dsn):
-        sys.exit("CABRAIN_TOKEN and CABRAIN_DSN must be set (see module docstring)")
+    if not args.dry_run and not token:
+        sys.exit("CABRAIN_TOKEN must be set (see module docstring)")
 
     gh_map = github_login_map()
 
@@ -661,27 +711,48 @@ def main() -> int:
         return 0
 
     b = Brain(api, token, dsn)
-    by_type, by_name = load_entities(b)
+    if b.db is None:
+        print("no CABRAIN_DSN -> content refresh only "
+              "(entity links and USED_AI_ON edges skipped)")
+    by_type, by_name = (load_entities(b) if b.db is not None
+                        else (defaultdict(dict), {}))
 
     todo = recs[:args.limit] if args.limit else recs
+
+    # skip rollups whose text is byte-identical to what we last wrote
+    hashes = {} if args.force else load_hashes(args.state)
+    fresh = {r["sourceRef"]: content_hash(r) for r, _ in todo}
+    changed = [(r, e) for r, e in todo if hashes.get(r["sourceRef"]) != fresh[r["sourceRef"]]]
+    print(f"{len(changed)} of {len(todo)} rollups changed since the last run"
+          f"{' (--force)' if args.force else ''}")
+    todo = changed
+
     ids: list[tuple[str, list]] = []
+    written: set[str] = set()
 
     def work(item):
         rec, ents = item
         mid = b.retain(rec)
-        return (mid, ents) if mid else None
+        return (mid, ents, rec["sourceRef"]) if mid else None
 
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         for i, res in enumerate(ex.map(work, todo), 1):
             if res:
-                ids.append(res)
+                ids.append((res[0], res[1]))
+                written.add(res[2])
             if i % 50 == 0:
                 print(f"  retained {i}/{len(todo)} ...", flush=True)
-    print(f"retained {len(ids)}/{len(todo)} rollups")
+    print(f"retained {len(ids)}/{len(todo)} changed rollups")
+
+    # Record the hash only for rollups that actually landed, so a failed retain
+    # is retried next run instead of being skipped forever.
+    for ref in written:
+        hashes[ref] = fresh[ref]
+    save_hashes(args.state, hashes)
 
     # memory -> entity links (this is what Store.expandEntities traverses)
     links = 0
-    for mid, ents in ids:
+    for mid, ents in (ids if b.db is not None else []):
         seen = set()
         for kind, key in ents:
             if kind == "repo":
@@ -698,9 +769,12 @@ def main() -> int:
                 links += 1
     print(f"memory_entities links upserted: {links}")
 
-    made, upd, skip, pairs, tot, window = used_ai_on(duck, b, by_type, by_name, True)
-    print(f"USED_AI_ON edges: {made} new, {upd} updated, {skip} unresolved "
-          f"(from {pairs} cwd-derived person/repo pairs; {window})")
+    if b.db is not None:
+        made, upd, skip, pairs, tot, window = used_ai_on(duck, b, by_type, by_name, True)
+        print(f"USED_AI_ON edges: {made} new, {upd} updated, {skip} unresolved "
+              f"(from {pairs} cwd-derived person/repo pairs; {window})")
+    else:
+        window = used_ai_on(duck, b, by_type, by_name, False)[5]
 
     # One memory that states the AI-attribution limit, so a question the data
     # cannot answer gets an honest answer instead of a confident wrong one.
