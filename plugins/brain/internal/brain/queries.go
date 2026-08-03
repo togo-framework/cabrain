@@ -159,8 +159,11 @@ type GraphData struct {
 }
 
 func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphData, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 200
+	if limit <= 0 {
+		limit = 1500
+	}
+	if limit > 5000 {
+		limit = 5000
 	}
 	g := &GraphData{Nodes: []GraphNode{}, Edges: []GraphEdge{}}
 	db, err := s.db(ctx)
@@ -198,15 +201,22 @@ WITH ends AS (
   SELECT e.id, e.name, COALESCE(NULLIF(e.entity_type,''),'entity') AS grp, COALESCE(d.d,0) AS deg
   FROM entities e LEFT JOIN deg d ON d.id = e.id
   WHERE ($1 = '' OR e.namespace = $1)
-), quota AS (
-  SELECT GREATEST(3, ` + itoa(limit) + ` / GREATEST(1, (SELECT count(DISTINCT grp) FROM typed))) AS q
+), grp_quota(grp, q) AS (
+  VALUES ('portfolio', 500), ('venture', 500), ('person', 500), ('agent', 500),
+         ('repo', 500), ('channel', 500), ('campaign', 500),
+         ('goal', 200), ('okr', 200), ('roadmap', 200), ('code_module', 200),
+         ('doc', 100), ('feed', 80), ('issue', 80),
+         ('learning', 60), ('activity', 60), ('meeting', 60)
+), default_quota AS (
+  SELECT GREATEST(20, ` + itoa(limit) + ` / GREATEST(1, (SELECT count(DISTINCT grp) FROM typed))) AS q
 ), ranked AS (
-  SELECT id, name, grp, deg,
-         ROW_NUMBER() OVER (PARTITION BY grp ORDER BY deg DESC, name) AS rn
-  FROM typed
+  SELECT t.id, t.name, t.grp, t.deg,
+         COALESCE(gq.q, (SELECT q FROM default_quota)) AS q,
+         ROW_NUMBER() OVER (PARTITION BY t.grp ORDER BY t.deg DESC, t.name) AS rn
+  FROM typed t LEFT JOIN grp_quota gq ON gq.grp = t.grp
 )
-SELECT id::text, name, grp FROM ranked, quota
-WHERE rn <= quota.q
+SELECT id::text, name, grp FROM ranked
+WHERE rn <= q
 ORDER BY deg DESC, grp, name
 LIMIT ` + itoa(limit)
 	args := []any{namespace}
