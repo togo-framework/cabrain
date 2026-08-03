@@ -3,7 +3,7 @@
 package main
 
 import (
-	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"github.com/togo-framework/cabrain/internal/server"
@@ -14,7 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	_ "github.com/jackc/pgx/v5/stdlib"
 "context"
+"crypto/rand"
 
 )
 
@@ -171,16 +173,27 @@ func waitForDatabase() {
 	}
 	for i := 0; i < 60; i++ {
 		conn, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
+		if err == nil { _ = conn.Close(); break }
+		time.Sleep(1 * time.Second)
+	}
+	db, derr := sql.Open("pgx", dsn)
+	if derr != nil {
+		fmt.Printf("⚠ sql.Open(%s): %v\n", hostPort, derr)
+		return
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	for i := 0; i < 90; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		err := db.PingContext(ctx)
+		cancel()
 		if err == nil {
-			_ = conn.Close()
-			if i > 0 {
-				fmt.Printf("→ database %s reachable after %ds\n", hostPort, i)
-			}
+			if i > 0 { fmt.Printf("→ database %s query-ready after %ds\n", hostPort, i) }
 			return
 		}
 		time.Sleep(1 * time.Second)
 	}
-	fmt.Printf("⚠ database %s still unreachable after 60s — provider registrations may fail-closed\n", hostPort)
+	fmt.Printf("⚠ database %s TCP-open but not query-ready after 90s\n", hostPort)
 }
 
 func extractHostPort(dsn string) string {
