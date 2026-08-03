@@ -192,7 +192,7 @@ export const brainApi = {
   stats: () => getJSON<Stats>("/api/brain/stats"),
   activity: (limit = 50) => getJSON<{ items: ActivityItem[] }>(`/api/brain/activity?limit=${limit}`),
   namespaces: () => getJSON<{ brains: NamespaceInfo[] }>("/api/brain/namespaces"),
-  graph: (namespace = "", limit = 200) =>
+  graph: (namespace = "", limit = 3000) =>
     getJSON<GraphData>(`/api/brain/graph${qs({ namespace, limit })}`),
   // Full memory row for a graph entity node (strip the `ent:` prefix off the
   // node id to get the bare UUID before calling this).

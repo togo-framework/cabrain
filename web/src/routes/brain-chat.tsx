@@ -112,7 +112,7 @@ export function BrainChat() {
 
   // Suggestions from the brain's graph (Shape-of-AI: Suggestions / Initial CTA) —
   // pick a few named entities/ventures so the blank canvas is never empty.
-  const graph = useQuery({ queryKey: ["brain", "graph", namespace], queryFn: () => brainApi.graph(namespace, 60) });
+  const graph = useQuery({ queryKey: ["brain", "graph", namespace], queryFn: () => brainApi.graph(namespace, 3000) });
   const suggestions = useMemo(() => {
     const nodes = (graph.data?.nodes ?? []).filter((n) => !["root", "type"].includes(n.group ?? ""));
     const names = Array.from(new Set(nodes.map((n) => n.name).filter(Boolean)));

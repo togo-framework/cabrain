@@ -46,7 +46,7 @@ export function BrainOverview({ namespace }: { namespace: string }) {
   });
   const graph = useQuery({
     queryKey: ["brain", "graph", namespace],
-    queryFn: () => brainApi.graph(namespace, 250),
+    queryFn: () => brainApi.graph(namespace, 3000),
   });
   const secrets = useQuery({
     queryKey: ["brain", "secrets", namespace],
