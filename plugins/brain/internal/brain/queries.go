@@ -160,10 +160,10 @@ type GraphData struct {
 
 func (s *Store) Graph(ctx context.Context, namespace string, limit int) (*GraphData, error) {
 	if limit <= 0 {
-		limit = 1500
+		limit = 3000
 	}
-	if limit > 5000 {
-		limit = 5000
+	if limit > 8000 {
+		limit = 8000
 	}
 	g := &GraphData{Nodes: []GraphNode{}, Edges: []GraphEdge{}}
 	db, err := s.db(ctx)
