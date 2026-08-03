@@ -3,16 +3,19 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"github.com/togo-framework/cabrain/internal/server"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+"context"
 
-	"github.com/togo-framework/cabrain/internal/server"
 )
 
 // ensureAuthSecret guarantees a >=32-byte AUTH_SECRET before Boot(), so the togo
@@ -134,6 +137,7 @@ func main() {
 	}
 
 	ensureAuthSecret()
+	waitForDatabase()
 
 	a := server.Boot()
 	defer a.Kernel.Close()
@@ -147,4 +151,68 @@ func main() {
 	if err := k.Serve(context.Background()); err != nil {
 		panic(err)
 	}
+}
+
+// waitForDatabase blocks until the postgres URL in CABRAIN_DATABASE_URL / DATABASE_URL
+// accepts connections. Solves the boot race on Docker Desktop restart: the auth plugin
+// runs ensureSchema() during provider registration, and if pg isn't up yet the provider
+// silently fails → /api/auth/* stays 404 for the entire container lifetime.
+func waitForDatabase() {
+	dsn := os.Getenv("CABRAIN_DATABASE_URL")
+	if dsn == "" {
+		dsn = os.Getenv("DATABASE_URL")
+	}
+	if dsn == "" {
+		return
+	}
+	hostPort := extractHostPort(dsn)
+	if hostPort == "" {
+		return
+	}
+	for i := 0; i < 60; i++ {
+		conn, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			if i > 0 {
+				fmt.Printf("→ database %s reachable after %ds\n", hostPort, i)
+			}
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+	fmt.Printf("⚠ database %s still unreachable after 60s — provider registrations may fail-closed\n", hostPort)
+}
+
+func extractHostPort(dsn string) string {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil || u.Host == "" {
+			return ""
+		}
+		host := u.Host
+		if !strings.Contains(host, ":") {
+			host += ":5432"
+		}
+		return host
+	}
+	var host, port string
+	for _, kv := range strings.Fields(dsn) {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "host":
+			host = v
+		case "port":
+			port = v
+		}
+	}
+	if host == "" {
+		return ""
+	}
+	if port == "" {
+		port = "5432"
+	}
+	return host + ":" + port
 }
